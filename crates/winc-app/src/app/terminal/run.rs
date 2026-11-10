@@ -269,8 +269,36 @@ impl App {
         let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
             return;
         };
-        let Some(mut config) = winc_config::script_config(&path) else {
-            return;
+        // 脚本位于 WSL 发行版内时，在发行版内用发行版的解释器运行：Windows 侧的解释器（如
+        // `python`）通过 UNC 路径访问发行版文件时，可能找不到发行版侧安装的依赖；解释器、依赖、
+        // `__file__` 与相对导入都应在发行版内。发行版内路径一般不含空格（不另作转义）。
+        let mut config = if let Some(loc) = winc_editor::wsl::locate_here(&path) {
+            let Some(script) = winc_config::script(&path) else {
+                return;
+            };
+            // 发行版内按 Linux 约定，`.py` 用 `python3`（Windows 上 `script` 给的是 `python`）。
+            let interpreter = if script.command == "python" {
+                "python3"
+            } else {
+                script.command
+            };
+            let cwd = std::path::Path::new(&loc.path)
+                .parent()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "/".to_owned());
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            winc_config::RunConfig {
+                name: format!("Run {name}"),
+                command: format!("wsl.exe -d {} --cd {cwd} -- {interpreter}", loc.distro),
+                args: vec![loc.path.clone()],
+                cwd: None,
+                env: Vec::new(),
+            }
+        } else {
+            match winc_config::script_config(&path) {
+                Some(config) => config,
+                None => return,
+            }
         };
         config.args.extend(winc_config::split_args(extra));
         self.start_run(config);

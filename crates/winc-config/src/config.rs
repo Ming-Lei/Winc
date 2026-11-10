@@ -167,8 +167,8 @@ pub struct Config {
     pub fix_commands: BTreeMap<String, String>,
     /// 各脚本的解释器命令，键是语言的 id（如 `python`、`typescript`）。
     ///
-    /// 没写的语言用 PATH 上的默认解释器；值是命令或解释器路径（如 `C:\Python311\python.exe`），
-    /// 同一命令也可带参数（如 `python3 -X dev`）。
+    /// 没写的语言用 PATH 上的默认解释器；值是命令或解释器路径（如 `C:\Python311\python.exe`）。
+    /// 含空格的路径按所用 shell 自动加引号；要传参数（如 `-X dev`）用右键「运行…」的附加参数。
     pub script_commands: BTreeMap<String, String>,
 }
 

@@ -149,10 +149,34 @@ fn bad_format_settings_are_reported_one_by_one() {
 }
 
 #[test]
-fn project_configs_only_read_the_format_section() {
+fn run_interpreters_are_read_from_user_config() {
+    let (config, problems) = Config::parse(
+        r#"{
+                "run": {
+                    "interpreters": {
+                        "python": "C:\\venv\\python.exe",
+                        "javascript": "/usr/bin/node"
+                    }
+                }
+            }"#,
+    );
+    assert_eq!(
+        config.script_commands.get("python").map(String::as_str),
+        Some("C:\\venv\\python.exe")
+    );
+    assert_eq!(
+        config.script_commands.get("javascript").map(String::as_str),
+        Some("/usr/bin/node")
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+}
+
+#[test]
+fn project_configs_only_read_format_and_run_sections() {
     let (config, problems) = Config::parse_project(
         r#"{
                 "format": { "onSave": true, "commands": { "TypeScript": "biome format --stdin-file-path={file}" } },
+                "run": { "interpreters": { "python": "C:\\venv\\python.exe" } },
                 "editor": { "size": 30 }
             }"#,
     );
@@ -161,8 +185,12 @@ fn project_configs_only_read_the_format_section() {
         config.format_commands.get("typescript").map(String::as_str),
         Some("biome format --stdin-file-path={file}")
     );
+    assert_eq!(
+        config.script_commands.get("python").map(String::as_str),
+        Some("C:\\venv\\python.exe")
+    );
     assert_eq!(config.editor_size, None, "项目改不了编辑器的字号");
-    assert_eq!(problems, ["项目设置仅支持 format，已忽略 editor"]);
+    assert_eq!(problems, ["项目设置仅支持 format 和 run，已忽略 editor"]);
     assert!(!Config::parse_project("[]").1.is_empty());
 
     let dir = std::env::temp_dir().join(format!("winc-project-config-{}", std::process::id()));

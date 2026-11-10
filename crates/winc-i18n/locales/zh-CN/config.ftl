@@ -6,7 +6,7 @@ config-root-not-object = 配置文件的顶层应为对象，已使用默认设�
 config-unknown-key = 无法识别 { $key }，已忽略
 config-project-read-failed = 无法读取（{ $error }），已忽略
 config-project-invalid-json = 不是有效的 JSON 对象，已忽略
-config-project-unsupported-key = 项目设置仅支持 format，已忽略 { $key }
+config-project-unsupported-key = 项目设置仅支持 format 和 run，已忽略 { $key }
 
 ## 运行配置（.winc/run.json）。
 

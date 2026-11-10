@@ -269,12 +269,11 @@ impl App {
         let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
             return;
         };
-        // 配置的解释器（`run.interpreters`，键是扩展名）优先；没配置时用 PATH 上的默认解释器。
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(str::to_ascii_lowercase);
-        let configured = ext.and_then(|ext| self.config.script_commands.get(&ext).cloned());
+        // 配置的解释器（`run.interpreters`，键是语言的 id，如 `python`）优先；没配置时用 PATH 上的
+        // 默认解释器。
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let language = winc_syntax::detect(name.as_ref()).id;
+        let configured = self.config.script_commands.get(language).cloned();
         let mut config = if let Some(loc) = winc_editor::wsl::locate_here(&path) {
             let Some(script) = winc_config::script(&path) else {
                 return;
@@ -292,7 +291,6 @@ impl App {
                 .parent()
                 .map(|dir| dir.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "/".to_owned());
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
             winc_config::RunConfig {
                 name: format!("Run {name}"),
                 command: format!("wsl.exe -d {} --cd {cwd} -- {interpreter}", loc.distro),

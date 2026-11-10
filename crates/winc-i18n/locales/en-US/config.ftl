@@ -6,7 +6,7 @@ config-root-not-object = The top level of the configuration file should be an ob
 config-unknown-key = Unknown setting { $key }; ignored
 config-project-read-failed = Couldn’t read ({ $error }); ignored
 config-project-invalid-json = Not a valid JSON object; ignored
-config-project-unsupported-key = Project settings support only format; ignored { $key }
+config-project-unsupported-key = Project settings support only format and run; ignored { $key }
 
 ## 运行配置（.winc/run.json）。
 

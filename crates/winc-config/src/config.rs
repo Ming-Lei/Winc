@@ -165,9 +165,9 @@ pub struct Config {
     ///
     /// 没写的语言自动选择工具。
     pub fix_commands: BTreeMap<String, String>,
-    /// 各脚本的解释器命令，键是文件的扩展名（如 `py`、`js`）。
+    /// 各脚本的解释器命令，键是语言的 id（如 `python`、`typescript`）。
     ///
-    /// 没写的扩展名用 PATH 上的默认解释器；值是命令或解释器路径（如 `C:\Python311\python.exe`），
+    /// 没写的语言用 PATH 上的默认解释器；值是命令或解释器路径（如 `C:\Python311\python.exe`），
     /// 同一命令也可带参数（如 `python3 -X dev`）。
     pub script_commands: BTreeMap<String, String>,
 }
@@ -414,7 +414,7 @@ impl Config {
         out
     }
 
-    /// 读取项目配置（`root` 下的 `.winc/config.json`），只认 `format` 一节，其他内容报告后忽略。
+    /// 读取项目配置（`root` 下的 `.winc/config.json`），只认 `format` 和 `run` 两节，其他内容报告后忽略。
     ///
     /// 文件不存在时返回 `None`；无法读取或无法理解的部分与用户配置相同，退回默认值并报告。
     pub fn load_project(root: &Path) -> Option<(Config, Vec<String>)> {
@@ -439,10 +439,10 @@ impl Config {
             return (config, problems);
         };
         for (key, value) in object {
-            if key == "format" {
-                read_section(&mut config, "format", FORMAT, value, &mut problems);
-            } else {
-                problems.push(t!("config-project-unsupported-key", key = key.as_str()));
+            match key.as_str() {
+                "format" => read_section(&mut config, "format", FORMAT, value, &mut problems),
+                "run" => read_section(&mut config, "run", RUN, value, &mut problems),
+                _ => problems.push(t!("config-project-unsupported-key", key = key.as_str())),
             }
         }
         (config, problems)

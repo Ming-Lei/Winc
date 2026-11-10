@@ -172,8 +172,7 @@ impl SettingsPage {
             }
             SettingsPage::Run => vec![Section {
                 title: Some(t!("settings-section-run-interpreters")),
-                items: languages
-                    .script
+                items: winc_config::script_language_ids()
                     .iter()
                     .map(|&id| Setting::ScriptCommand(id))
                     .collect(),

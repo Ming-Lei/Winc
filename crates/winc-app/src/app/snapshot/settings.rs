@@ -11,6 +11,41 @@ use super::*;
 use winc_editor::format::{PRESETS, Task};
 
 #[test]
+fn run_page_renders_without_crashing() {
+    let dir = sample_folder("settings-run-page");
+    let mut app = app_with(&dir.join("script.py"), false);
+    app.open_settings();
+    app.settings.selected = Setting::ScriptCommand("python");
+    paint(&mut app);
+    // 点击运行行：弹出菜单并渲染。
+    app.settings_open_menu(Setting::ScriptCommand("python"));
+    paint(&mut app);
+}
+
+#[test]
+fn run_page_with_project_config_and_editing() {
+    let dir = sample_folder("settings-run-project");
+    std::fs::create_dir_all(dir.join(".winc")).unwrap();
+    std::fs::write(
+        dir.join(".winc/config.json"),
+        r#"{"run":{"interpreters":{"python":"C:\\venv\\python.exe"}}}"#,
+    )
+    .unwrap();
+    let mut app = app_with(&dir.join("script.py"), false);
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Run);
+    paint(&mut app);
+    // 项目级配置显示「由项目设置（.winc/config.json）指定」。
+    let detail = app.settings.tool_row(Setting::ScriptCommand("python")).map(|r| r.detail.clone());
+    assert!(detail.as_deref().is_some_and(|d| d.contains("项目设置")));
+    // 编辑（输入框）并提交。
+    app.settings_start_editing(Setting::ScriptCommand("python"));
+    paint(&mut app);
+    app.settings_commit_script("python", Some("C:\\venv\\python.exe".into()));
+    paint(&mut app);
+}
+
+#[test]
 fn scrolling_settings_reuses_the_window_below_and_looks_the_same() {
     use std::time::{Duration, Instant};
 

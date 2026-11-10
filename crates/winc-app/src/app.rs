@@ -79,7 +79,7 @@ pub use workspace::tree::{NameInput, TreeMotion};
 pub use workspace::tree_drag::TreeDrag;
 pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -299,6 +299,8 @@ pub enum PromptKind {
     NewTag { at: String },
     /// 分支的新名称；`old` 为当前名称。
     RenameBranch { old: String },
+    /// 运行脚本前自定义参数；`id` 为要运行的文档。
+    RunArgs { id: DocumentId },
 }
 
 /// 键盘焦点所在的区域。
@@ -957,6 +959,9 @@ pub struct App {
     pending_jump: Option<(DocumentId, usize, bool)>,
     /// 跳转条（⌃G）的输入；`None` 表示跳转条未打开。
     pub goto_input: Option<TextField>,
+
+    /// 每个脚本文件上次「自定义参数」运行用的参数（路径 → 参数字符串），会话内有效。
+    pub run_args_memory: HashMap<PathBuf, String>,
 
     /// 侧栏搜索面板的状态。
     pub global: GlobalSearch,

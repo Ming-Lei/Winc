@@ -260,6 +260,22 @@ impl App {
         (self.run.current()).is_some_and(|config| self.running_config(&config.name).is_some())
     }
 
+    /// 把当前文档作为脚本运行：解释器按文件扩展名识别，`extra` 是用户自定义的参数
+    /// （按 shell 规则拆分后追加在文件路径之后），输出显示在内置终端面板。
+    ///
+    /// 与运行配置不同——右键点「运行脚本」本身就是用户确认，不需要再弹确认框
+    /// （仓库里的 `.winc/run.json` 才需要指纹确认）。
+    pub(in crate::app) fn run_script(&mut self, id: winc_editor::DocumentId, extra: &str) {
+        let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
+            return;
+        };
+        let Some(mut config) = winc_config::script_config(&path) else {
+            return;
+        };
+        config.args.extend(winc_config::split_args(extra));
+        self.start_run(config);
+    }
+
     /// 运行当前选中的配置，已在运行时结束后重新运行；还没有配置时打开配置文件。
     pub(in crate::app) fn run_current_config(&mut self) {
         self.reload_run_configs();
@@ -333,12 +349,18 @@ impl App {
             self.reveal_run_panel();
             return;
         }
-        let Some(root) = self.editor.root().map(Path::to_path_buf) else {
-            return;
-        };
+        // 运行单个脚本时可能没有打开的目录：工作目录由 config.cwd 的绝对路径给出，
+        // `Path::join` 遇到绝对路径会整体替换，`"."` 仅作兜底。
+        let root = self.editor.root().map(Path::to_path_buf);
         let env = environment(self.config.terminal_prompt != Some(false));
         let shell = self.config.terminal_shell.as_deref();
-        let (launch, env) = run_launch(&config, &root, shell, cfg!(windows), env);
+        let (launch, env) = run_launch(
+            &config,
+            root.as_deref().unwrap_or(Path::new(".")),
+            shell,
+            cfg!(windows),
+            env,
+        );
         let banner = banner(&config, launch_kind(&launch, cfg!(windows)));
         self.terminal.run_queue.push(RunStart {
             config,

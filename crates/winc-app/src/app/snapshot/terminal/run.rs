@@ -681,3 +681,36 @@ fn snapshot_run_buttons() {
         clean(&dir);
     }
 }
+
+/// 右键「运行脚本」：解释器按文件扩展名识别，自定义参数按 shell 规则拆分后追加在文件路径之后，
+/// 命令交给 shell 执行。
+#[test]
+fn run_script_appends_custom_args_after_the_file() {
+    let dir = sample_folder("run-script");
+    std::fs::write(dir.join("script.py"), "print('hi')\n").unwrap();
+    let mut app = app_with(&dir.join("script.py"), false);
+    app.config.terminal_enabled = Some(true);
+    app.relayout();
+    let log = app.attach_recording_helper(&dir);
+    let id = app
+        .editor
+        .documents
+        .iter()
+        .find(|doc| doc.path.as_deref().is_some_and(|p| p.ends_with("script.py")))
+        .map(|doc| doc.id)
+        .expect("script.py 已打开");
+    app.run_script(id, "--verbose --port 8080");
+    app.relayout();
+    let sent = app.sent_to_helper(&log);
+    let Some(ToHelper::Spawn { args, .. }) =
+        sent.iter().find(|m| matches!(m, ToHelper::Spawn { .. }))
+    else {
+        panic!("应该发了 Spawn：{sent:?}");
+    };
+    // 命令由 shell 执行，最后一项是完整的命令行。
+    let line = String::from_utf8_lossy(args.last().unwrap());
+    assert!(line.contains("script.py"), "{line}");
+    assert!(line.contains("--verbose"), "{line}");
+    assert!(line.contains("--port 8080"), "{line}");
+    clean(&dir);
+}

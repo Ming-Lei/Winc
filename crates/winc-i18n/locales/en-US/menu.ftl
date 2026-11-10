@@ -23,6 +23,8 @@ menu-copied-path = Copied path
 menu-copied-relative-path = Copied relative path
 menu-copied-reference = Copied { $reference }
 menu-copy-reference-unsaved = The file hasn’t been saved and has no path
+menu-run-script = Run { $tool }
+menu-run-script-args = Run { $tool }…
 
 ## Formatter menu
 

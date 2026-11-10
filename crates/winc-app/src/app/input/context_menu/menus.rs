@@ -348,7 +348,14 @@ pub fn search_result_menu(file: bool, replace: bool) -> Vec<MenuEntry> {
 /// `bookmarked` 决定「添加书签」「删除书签」哪个可用。没有选区时剪切、复制作用于光标所在的整行，
 /// 与 `⌘X`、`⌘C` 相同；只读的文件不能格式化、剪切、粘贴。格式化和修复总是可以点击，无法执行时
 /// 点击后说明原因。「粘贴」不检查剪贴板里有没有文字：弹出菜单不应读取其他应用复制的内容。
-pub fn editor_menu(editable: bool, selected: bool, bookmarked: bool) -> Vec<MenuEntry> {
+/// `script` 为 `true`（当前文档是可运行的脚本）时有「运行脚本」和「运行脚本…」两项，前者用上次
+/// 记忆的参数，后者先自定义参数再运行。
+pub fn editor_menu(
+    editable: bool,
+    selected: bool,
+    bookmarked: bool,
+    script: bool,
+) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
@@ -366,6 +373,9 @@ pub fn editor_menu(editable: bool, selected: bool, bookmarked: bool) -> Vec<Menu
         menu.push(Item(FormatSelection, editable));
     }
     menu.push(Item(Fix, editable));
+    if script {
+        menu.extend([Separator, Item(RunScript, true), Item(RunScriptArgs, true)]);
+    }
     menu.extend([
         Separator,
         Item(Cut, editable),

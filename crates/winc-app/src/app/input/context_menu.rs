@@ -143,6 +143,11 @@ pub enum MenuCommand {
     Format,
     FormatSelection,
     Fix,
+    /// 编辑区：把当前文档作为脚本运行（解释器按文件扩展名识别），输出显示在内置终端面板。
+    /// 使用上次「自定义参数」记忆的参数，没有则不带参数。
+    RunScript,
+    /// 编辑区：运行前自定义参数（弹出顶部输入条），`↩` 运行并记忆参数。
+    RunScriptArgs,
     /// 设置中「添加语言…」菜单的一项，参数为语言在 `winc_syntax::languages()` 中的序号（从 0 起）。
     Language(usize),
     /// 设置中「排除的语言」菜单的一项：切换某种语言保存时是否跳过格式化和修复，
@@ -494,6 +499,8 @@ impl MenuCommand {
             MenuCommand::Format => t!("cmd-format"),
             MenuCommand::FormatSelection => t!("cmd-format-selection"),
             MenuCommand::Fix => t!("cmd-fix"),
+            // 标题带解释器名（「运行 Python」），由 `menu_label` 给出，这里返回空串。
+            MenuCommand::RunScript | MenuCommand::RunScriptArgs => "",
             MenuCommand::ToolAuto => t!("format-tool-auto"),
             MenuCommand::ToolPreset(i) => PRESETS.get(i).map_or("", |p| p.name),
             MenuCommand::ToolCustom => t!("format-tool-custom-command"),
@@ -521,6 +528,8 @@ impl MenuCommand {
     /// 返回键位表中对应的命令，菜单右侧据此显示该命令的快捷键；没有对应命令时返回 `None`。
     pub fn action(self) -> Option<Action> {
         Some(match self {
+            // 「运行脚本」没有对应键位，只从右键菜单触发。
+            MenuCommand::RunScript | MenuCommand::RunScriptArgs => return None,
             MenuCommand::Reveal => Action::RevealInFinder,
             MenuCommand::OpenInTerminal => Action::OpenInTerminal,
             MenuCommand::FindInFolder => Action::FindInFolder,

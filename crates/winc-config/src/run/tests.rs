@@ -193,3 +193,52 @@ fn generated_entries_spell_out_every_field() {
     assert_eq!(configs.len(), 2);
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+/// 按扩展名识别解释器；不认识的扩展名不识别。
+#[test]
+fn script_by_extension() {
+    let tool = |name: &str| script(Path::new(name)).map(|s| s.tool);
+    assert_eq!(tool("main.py"), Some("Python"));
+    assert_eq!(tool("app.js"), Some("Node"));
+    assert_eq!(tool("a.mts"), Some("Node"));
+    assert_eq!(tool("script.rb"), Some("Ruby"));
+    assert_eq!(tool("build.sh"), Some("Bash"));
+    assert_eq!(tool("x.go"), Some("Go"));
+    assert_eq!(tool("unknown.xyz"), None);
+    assert_eq!(tool("Makefile"), None);
+    assert_eq!(tool("no_extension"), None);
+}
+
+/// 运行配置以文件为参数、工作目录为文件所在目录。
+#[test]
+fn script_config_runs_the_file() {
+    let file = Path::new("/project/src/main.py");
+    let config = script_config(file).unwrap();
+    assert_eq!(config.name, "Run main.py");
+    assert_eq!(config.command, if cfg!(windows) { "python" } else { "python3" });
+    assert_eq!(config.args, ["/project/src/main.py"]);
+    assert_eq!(config.cwd.as_deref(), Some("/project/src"));
+    assert!(config.env.is_empty());
+}
+
+/// 参数字符串按 shell 规则拆分：空白分隔，单双引号成组，反斜杠转义。
+#[test]
+fn split_args_by_shell_rules() {
+    assert_eq!(split_args(""), Vec::<String>::new());
+    assert_eq!(split_args("  "), Vec::<String>::new());
+    assert_eq!(split_args("--verbose"), ["--verbose"]);
+    assert_eq!(split_args("--name \"foo bar\""), ["--name", "foo bar"]);
+    assert_eq!(split_args("--x='y z'"), ["--x=y z"]);
+    assert_eq!(split_args("a\\ b"), ["a b"]);
+    // 未闭合的引号按已读到的内容处理，不报错。
+    assert_eq!(split_args("--x='y"), ["--x=y"]);
+}
+
+/// 运行脚本时自定义参数追加在文件路径之后（`run_script` 的核心组合逻辑）。
+#[test]
+fn script_args_follow_the_file() {
+    let file = Path::new("/project/main.py");
+    let mut config = script_config(file).unwrap();
+    config.args.extend(split_args("--verbose --port 8080"));
+    assert_eq!(config.args, ["/project/main.py", "--verbose", "--port", "8080"]);
+}

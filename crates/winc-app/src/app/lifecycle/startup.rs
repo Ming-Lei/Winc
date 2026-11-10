@@ -175,6 +175,7 @@ impl App {
             replace_open: false,
             pending_jump: None,
             goto_input: None,
+            run_args_memory: std::collections::HashMap::new(),
             global: GlobalSearch::default(),
             outline: OutlineState::default(),
             picker: FileIndex::default(),

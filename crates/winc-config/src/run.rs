@@ -202,5 +202,99 @@ fn text(value: &Json) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 一种可运行脚本的识别结果：解释器命令和界面显示名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Script {
+    /// 交给 shell 执行的解释器命令行（可带参数，如 `node --experimental-strip-types`）。
+    pub command: &'static str,
+    /// 界面显示的友好名字（如「Python」「Node」），用于「运行 {工具}」菜单项。
+    pub tool: &'static str,
+}
+
+/// 按文件扩展名识别脚本的解释器；不认识的扩展名返回 `None`。
+///
+/// 只列确定能用解释器直接运行的脚本语言；需要编译或项目上下文的（如 Rust、Java）不在此列，
+/// 由 [`detected_run_configs`] 按项目文件识别。不检查解释器是否已安装：主程序的 `PATH` 不一定和
+/// 用户的 shell 相同，提前判断容易误判，运行失败会显示在内置终端面板中。
+pub fn script(file: &Path) -> Option<Script> {
+    let extension = file.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "py" => Script {
+            command: if cfg!(windows) { "python" } else { "python3" },
+            tool: "Python",
+        },
+        "js" | "mjs" | "cjs" => Script { command: "node", tool: "Node" },
+        // Node 22.6+ 直接运行 TypeScript；更老的 Node 需要 `tsx`。
+        "ts" | "mts" | "cts" => Script {
+            command: "node --experimental-strip-types",
+            tool: "Node",
+        },
+        "rb" => Script { command: "ruby", tool: "Ruby" },
+        "sh" | "bash" => Script { command: "bash", tool: "Bash" },
+        "pl" | "pm" => Script { command: "perl", tool: "Perl" },
+        "lua" => Script { command: "lua", tool: "Lua" },
+        "php" => Script { command: "php", tool: "PHP" },
+        "go" => Script { command: "go run", tool: "Go" },
+        _ => return None,
+    })
+}
+
+/// 返回运行脚本文件 `file` 的配置：解释器按扩展名识别，工作目录是文件所在目录。
+///
+/// 工作目录用绝对路径（相对导入、`__file__`、`process.cwd()` 等按此解析），不受是否打开目录
+/// 影响。不认识的扩展名返回 `None`。
+pub fn script_config(file: &Path) -> Option<RunConfig> {
+    let script = script(file)?;
+    let name = file.file_name()?.to_string_lossy().into_owned();
+    let cwd = file.parent().map(|dir| dir.to_string_lossy().into_owned());
+    Some(RunConfig {
+        name: format!("Run {name}"),
+        command: script.command.to_owned(),
+        args: vec![file.to_string_lossy().into_owned()],
+        cwd,
+        env: Vec::new(),
+    })
+}
+
+/// 把用户输入的参数字符串按 shell 规则拆成多项：空白分隔，支持单引号、双引号和反斜杠转义。
+///
+/// 每项随后按原样传给程序（[`RunConfig::args`]），引号在此已处理完毕，不再交给 shell 解析；
+/// 未闭合的引号按已读到的内容处理。空输入返回空列表。
+pub fn split_args(text: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else {
+                    current.push(c);
+                }
+            }
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                }
+                c if c.is_whitespace() => {
+                    if !current.is_empty() {
+                        args.push(std::mem::take(&mut current));
+                    }
+                }
+                c => current.push(c),
+            },
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests;

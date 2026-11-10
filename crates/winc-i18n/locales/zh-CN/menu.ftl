@@ -23,6 +23,8 @@ menu-copied-path = 已复制路径
 menu-copied-relative-path = 已复制相对路径
 menu-copied-reference = 已复制 { $reference }
 menu-copy-reference-unsaved = 文件尚未保存，没有路径
+menu-run-script = 运行 { $tool }
+menu-run-script-args = 运行 { $tool }…
 
 ## 格式化工具菜单
 

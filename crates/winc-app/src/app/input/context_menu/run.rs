@@ -345,6 +345,17 @@ impl App {
             MenuCommand::RemoveBookmark => self.set_bookmark(false),
             MenuCommand::ListBookmarks => self.list_bookmarks(),
             MenuCommand::CopyReference => self.copy_reference(false),
+            MenuCommand::RunScript => {
+                // 直接运行：用上次「自定义参数」记忆的参数，没有则不带参数。
+                let extra = self
+                    .editor
+                    .document(id)
+                    .and_then(|doc| doc.path.clone())
+                    .and_then(|path| self.run_args_memory.get(&path).cloned())
+                    .unwrap_or_default();
+                self.run_script(id, &extra);
+            }
+            MenuCommand::RunScriptArgs => self.open_run_args_prompt(id),
             _ => {}
         }
     }

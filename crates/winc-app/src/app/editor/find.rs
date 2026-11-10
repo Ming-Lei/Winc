@@ -513,6 +513,18 @@ impl App {
         self.open_prompt(PromptKind::RenameBranch { old }, field);
     }
 
+    /// 打开运行脚本前自定义参数的输入条：预填上次的参数（没有则留空），`↩` 运行并记忆，
+    /// `Esc` 取消。参数按 shell 规则拆分后追加在文件路径之后。
+    pub(in crate::app) fn open_run_args_prompt(&mut self, id: DocumentId) {
+        let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
+            return;
+        };
+        let previous = self.run_args_memory.get(&path).cloned().unwrap_or_default();
+        let mut field = TextField::default();
+        field.set_text(&previous);
+        self.open_prompt(PromptKind::RunArgs { id }, field);
+    }
+
     /// 打开 `kind` 的输入条，输入框为 `field`，焦点移到输入条上；文件树中正在进行的名称输入先结束。
     fn open_prompt(&mut self, kind: PromptKind, field: TextField) {
         self.finish_name_input();
@@ -550,6 +562,13 @@ impl App {
             PromptKind::Stash => self.git_stash(&input),
             PromptKind::NewTag { at } => self.git_new_tag(&input, at),
             PromptKind::RenameBranch { old } => self.git_rename_branch(old, &input),
+            PromptKind::RunArgs { id } => {
+                // 先记住参数，再运行；同一文件下次点「运行脚本」直接带上这些参数。
+                if let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) {
+                    self.run_args_memory.insert(path, input.clone());
+                }
+                self.run_script(id, &input);
+            }
         }
         self.relayout();
         self.request_redraw();

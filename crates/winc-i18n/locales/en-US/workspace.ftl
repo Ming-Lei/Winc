@@ -187,6 +187,9 @@ workspace-goto-total = { $count ->
         [one] { $count } line
        *[other] { $count } lines
     }
+workspace-run-args-title = Run arguments
+workspace-run-args-placeholder = e.g. --verbose --port 8080
+workspace-run-args-hint = Space-separated, quotes supported; Enter runs, Esc cancels
 workspace-stash-title = Stash Changes
 workspace-stash-placeholder = Message (optional)
 workspace-stash-hint = Includes untracked files · { common-key-enter } Stash

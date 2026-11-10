@@ -389,6 +389,9 @@ impl App {
                     doc.readonly_reason().is_none(),
                     !doc.selection.is_empty(),
                     bookmarked,
+                    doc.path
+                        .as_deref()
+                        .is_some_and(|path| winc_config::script_config(path).is_some()),
                 );
                 // Git 模块开着、文件在仓库里：最后是「逐行追溯」开关。
                 if doc.path.as_deref().is_some_and(|p| self.in_repo(p)) {
@@ -898,6 +901,21 @@ impl App {
             | MenuCommand::GitPullRebase
             | MenuCommand::GitContinue
             | MenuCommand::GitAbort => self.git_label(command),
+            // 「运行脚本」的文字带上解释器名（如「运行 Python」）；「…」提示会弹出输入条。
+            MenuCommand::RunScript | MenuCommand::RunScriptArgs => {
+                let tool = self
+                    .editor
+                    .active()
+                    .and_then(|doc| doc.path.as_deref())
+                    .and_then(winc_config::script)
+                    .map_or("", |script| script.tool);
+                let message = if command == MenuCommand::RunScriptArgs {
+                    t!("menu-run-script-args", tool = tool)
+                } else {
+                    t!("menu-run-script", tool = tool)
+                };
+                MenuLabel::plain(&message)
+            }
             _ => MenuLabel::plain(command.label()),
         }
     }

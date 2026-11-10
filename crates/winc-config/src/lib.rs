@@ -16,8 +16,8 @@ pub use config::{Backup, Config, OptionAsMeta, RenderWhitespace, Saved, ThemeCho
 pub use font::{FontRequest, resolve_font};
 pub use json::Json;
 pub use run::{
-    RunConfig, affects_detected_configs, create_run_configs, detected_run_configs,
-    load_run_configs, run_configs_path,
+    RunConfig, Script, affects_detected_configs, create_run_configs, detected_run_configs,
+    load_run_configs, run_configs_path, script, script_config, split_args,
 };
 pub use state::{
     BADGE_COLORS, MAX_RECENT, Session, State, Tab, TerminalSession, WindowFrame, state_path,

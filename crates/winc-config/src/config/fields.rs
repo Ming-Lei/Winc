@@ -54,6 +54,7 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("terminal", TERMINAL),
     ("git", GIT),
     ("format", FORMAT),
+    ("run", RUN),
 ];
 
 /// 顶层的单值设置，写在各节之后。
@@ -392,6 +393,15 @@ pub(super) const FORMAT: &[Field] = &[
         write: |config| commands_json(&config.fix_commands),
     },
 ];
+
+/// `run` 节：右键运行脚本的解释器配置。
+pub(super) const RUN: &[Field] = &[Field {
+    key: "interpreters",
+    read: |config, value, name, problems| {
+        read_commands(value, name, &mut config.script_commands, problems)
+    },
+    write: |config| commands_json(&config.script_commands),
+}];
 
 /// 在 `fields` 中找键名为 `key` 的一项。
 pub(super) fn find<'a>(fields: &'a [Field], key: &str) -> Option<&'a Field> {

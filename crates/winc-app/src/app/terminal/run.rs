@@ -269,19 +269,25 @@ impl App {
         let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
             return;
         };
-        // 脚本位于 WSL 发行版内时，在发行版内用发行版的解释器运行：Windows 侧的解释器（如
-        // `python`）通过 UNC 路径访问发行版文件时，可能找不到发行版侧安装的依赖；解释器、依赖、
-        // `__file__` 与相对导入都应在发行版内。发行版内路径一般不含空格（不另作转义）。
+        // 配置的解释器（`run.interpreters`，键是扩展名）优先；没配置时用 PATH 上的默认解释器。
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase);
+        let configured = ext.and_then(|ext| self.config.script_commands.get(&ext).cloned());
         let mut config = if let Some(loc) = winc_editor::wsl::locate_here(&path) {
             let Some(script) = winc_config::script(&path) else {
                 return;
             };
-            // 发行版内按 Linux 约定，`.py` 用 `python3`（Windows 上 `script` 给的是 `python`）。
-            let interpreter = if script.command == "python" {
-                "python3"
-            } else {
-                script.command
-            };
+            // 发行版内解释器：配置优先；未配置时按 Linux 约定（`.py` 用 `python3`，Windows 上
+            // `script` 给的是 `python`）。发行版内路径一般不含空格（不另作转义）。
+            let interpreter = configured.as_deref().unwrap_or_else(|| {
+                if script.command == "python" {
+                    "python3"
+                } else {
+                    script.command
+                }
+            });
             let cwd = std::path::Path::new(&loc.path)
                 .parent()
                 .map(|dir| dir.to_string_lossy().into_owned())
@@ -295,10 +301,30 @@ impl App {
                 env: Vec::new(),
             }
         } else {
-            match winc_config::script_config(&path) {
+            let Some(script) = winc_config::script(&path) else {
+                return;
+            };
+            // 配置的命令或路径可能含空格（如 `C:\Program Files\...`），按所用 shell 加引号。
+            let kind = self
+                .config
+                .terminal_shell
+                .as_deref()
+                .map(|shell| shell_kind(shell.as_bytes()))
+                .unwrap_or(if cfg!(windows) {
+                    ShellKind::PowerShell
+                } else {
+                    ShellKind::Posix
+                });
+            let command = match configured {
+                Some(command) => quote(&command, kind),
+                None => script.command.to_owned(),
+            };
+            let mut config = match winc_config::script_config(&path) {
                 Some(config) => config,
                 None => return,
-            }
+            };
+            config.command = command;
+            config
         };
         config.args.extend(winc_config::split_args(extra));
         self.start_run(config);

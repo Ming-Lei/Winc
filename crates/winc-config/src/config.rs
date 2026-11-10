@@ -165,6 +165,11 @@ pub struct Config {
     ///
     /// 没写的语言自动选择工具。
     pub fix_commands: BTreeMap<String, String>,
+    /// 各脚本的解释器命令，键是文件的扩展名（如 `py`、`js`）。
+    ///
+    /// 没写的扩展名用 PATH 上的默认解释器；值是命令或解释器路径（如 `C:\Python311\python.exe`），
+    /// 同一命令也可带参数（如 `python3 -X dev`）。
+    pub script_commands: BTreeMap<String, String>,
 }
 
 /// 终端里哪一边的 ⌥ 当 Meta 用；另一边仍然输入 `å`、`∑` 这类字符。

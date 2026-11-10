@@ -12,11 +12,13 @@ settings-search-empty = No matching settings
 settings-page-appearance = Appearance
 settings-page-editor = Editor
 settings-page-format = Formatting
+settings-page-run = Run
 settings-page-terminal = Terminal
 settings-page-modules = Modules
 settings-page-keys = Shortcuts
 settings-page-about = About
 settings-section-format-tools = Formatters
+settings-section-run-interpreters = Script interpreters
 settings-section-fix-tools = Fixers
 
 ## Setting names.
@@ -143,6 +145,7 @@ settings-terminal-option-as-meta-right = Right ⌥
 settings-terminal-option-as-meta-both = Both ⌥
 settings-terminal-option-as-meta-none = None
 settings-command-placeholder = Enter a command; { "{file}" } stands for the file path
+settings-run-default-path = Default (PATH): { $command }
 settings-command-edit-hint = Press { common-key-enter } to save, Esc to cancel
 settings-font-not-installed = Font “{ $name }” is not installed
 settings-font-file-not-found = Font file “{ $name }” not found

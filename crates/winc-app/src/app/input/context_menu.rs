@@ -626,6 +626,8 @@ pub enum MenuTarget {
     Font(Setting),
     /// 设置的格式化页中一种语言的格式化（修复）工具。
     Tool(Task, &'static str),
+    /// 设置的运行页中一种语言的脚本解释器。
+    Script(&'static str),
     /// 状态栏中一个文档的缩进。
     Indent(DocumentId),
     /// 状态栏中一个文档的行尾。

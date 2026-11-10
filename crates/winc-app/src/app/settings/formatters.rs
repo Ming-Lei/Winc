@@ -291,6 +291,7 @@ impl App {
             }
             Setting::FormatCommand(id) => (MenuTarget::Tool(Task::Format, id), row.control),
             Setting::FixCommand(id) => (MenuTarget::Tool(Task::Fix, id), row.control),
+            Setting::ScriptCommand(id) => (MenuTarget::Script(id), row.control),
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
             Setting::Updates => return self.settings_check_updates(),
             _ => return,

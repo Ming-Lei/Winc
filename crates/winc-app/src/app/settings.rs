@@ -4,6 +4,7 @@
 //! 再写回 [`winc_config::Config`]。关闭浮层时先离开输入框。
 
 mod formatters;
+mod scripts;
 
 use std::ops::RangeInclusive;
 
@@ -50,6 +51,8 @@ pub struct SettingsState {
     pub languages: ToolLanguages,
     /// 格式化页每一行（格式化工具、修复工具）上显示的内容。
     pub tool_rows: Vec<(Setting, FormatRow)>,
+    /// 运行页每一行（脚本解释器）上显示的内容。
+    pub script_rows: Vec<(Setting, FormatRow)>,
     /// 当前帧绘制出的「安装方法…」链接的位置，以及链接所属的设置项。
     ///
     /// 文字宽度要到绘制时才知道，悬停和点击使用这里记录的位置。
@@ -140,6 +143,7 @@ impl SettingsState {
     pub fn tool_row(&self, setting: Setting) -> Option<&FormatRow> {
         self.tool_rows
             .iter()
+            .chain(&self.script_rows)
             .find(|(s, _)| *s == setting)
             .map(|(_, r)| r)
     }
@@ -205,7 +209,9 @@ impl App {
         self.settings.keyboard = false;
         self.settings.hover = None;
         self.settings.languages = ToolLanguages::default();
+        self.settings.languages.script = winc_config::script_language_ids().to_vec();
         self.refresh_format_rows(true);
+        self.refresh_script_rows();
         // 列出字体要读取字体文件，先在后台读好，打开字体菜单时不必等待；「默认 Shell」菜单中的
         // shell 同样在后台检测。
         std::thread::spawn(winc_render::installed_fonts);
@@ -845,7 +851,10 @@ impl App {
         let current = match tool_setting(setting) {
             Some((task, id)) => task_commands(&self.config, task).get(id).cloned(),
             None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
-            None => self.font_setting(setting).clone(),
+            None => match setting {
+                Setting::ScriptCommand(id) => self.config.script_commands.get(id).cloned(),
+                _ => self.font_setting(setting).clone(),
+            },
         };
         let mut field = TextField::default();
         field.set_text(current.as_deref().unwrap_or(""));
@@ -956,7 +965,10 @@ impl App {
                 self.focus = Focus::Settings;
                 self.set_terminal_shell(value);
             }
-            None => self.settings_commit_font(setting, value),
+            None => match setting {
+                Setting::ScriptCommand(id) => self.settings_commit_script(id, value),
+                _ => self.settings_commit_font(setting, value),
+            },
         }
     }
 

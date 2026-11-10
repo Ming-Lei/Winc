@@ -16,6 +16,8 @@ pub enum SettingsPage {
     Editor,
     /// 格式化：保存时的格式化和修复，以及各语言的工具命令。
     Format,
+    /// 运行：各脚本的解释器命令。
+    Run,
     /// 终端：默认 shell、面板位置、字体、字号和终端行为。
     Terminal,
     /// 模块：可选模块的开关。
@@ -28,10 +30,11 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 7] = [
+    pub const ALL: [SettingsPage; 8] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,
+        SettingsPage::Run,
         SettingsPage::Terminal,
         SettingsPage::Modules,
         SettingsPage::Keys,
@@ -52,6 +55,7 @@ impl SettingsPage {
             SettingsPage::Appearance => t!("settings-page-appearance"),
             SettingsPage::Editor => t!("settings-page-editor"),
             SettingsPage::Format => t!("settings-page-format"),
+            SettingsPage::Run => t!("settings-page-run"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Keys => t!("settings-page-keys"),
@@ -166,6 +170,14 @@ impl SettingsPage {
                 });
                 sections
             }
+            SettingsPage::Run => vec![Section {
+                title: Some(t!("settings-section-run-interpreters")),
+                items: languages
+                    .script
+                    .iter()
+                    .map(|&id| Setting::ScriptCommand(id))
+                    .collect(),
+            }],
             SettingsPage::Keys => Vec::new(),
             SettingsPage::About => vec![
                 plain(vec![Setting::Version]),
@@ -196,6 +208,8 @@ pub struct ToolLanguages {
     pub format: Vec<&'static str>,
     /// 「修复工具」一组列出的语言 id。
     pub fix: Vec<&'static str>,
+    /// 「脚本解释器」一组列出的语言 id。
+    pub script: Vec<&'static str>,
 }
 
 /// 一页中的一组设置项，共用一块底色，可以带标题。
@@ -291,6 +305,8 @@ pub enum Setting {
     AddLanguage,
     /// 修复工具一组下面的「添加语言…」。
     AddFixLanguage,
+    /// 某种语言（语言 id）的脚本解释器命令。
+    ScriptCommand(&'static str),
     /// 新建终端时运行的 shell（`terminal.shell`）。
     TerminalShell,
     /// 终端面板的位置：编辑区下方或右侧。
@@ -397,6 +413,7 @@ impl Setting {
             | Setting::FixCommand(_)
             | Setting::AddLanguage
             | Setting::AddFixLanguage => SettingsPage::Format,
+            Setting::ScriptCommand(_) => SettingsPage::Run,
             Setting::TerminalShell
             | Setting::TerminalPosition
             | Setting::TerminalFont
@@ -455,6 +472,7 @@ impl Setting {
             Setting::FormatCommand(id) | Setting::FixCommand(id) => {
                 winc_syntax::find(id).map_or(id, |l| l.name)
             }
+            Setting::ScriptCommand(id) => winc_syntax::find(id).map_or(id, |l| l.name),
             Setting::AddLanguage | Setting::AddFixLanguage => t!("settings-add-language"),
             Setting::TerminalShell => t!("settings-terminal-shell"),
             Setting::TerminalPosition => t!("settings-terminal-position"),
@@ -558,6 +576,7 @@ impl Setting {
             Setting::FormatCommand(_) | Setting::FixCommand(_) | Setting::TerminalShell => {
                 SettingControl::Command
             }
+            Setting::ScriptCommand(_) => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
             | Setting::Zoom

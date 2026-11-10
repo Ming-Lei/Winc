@@ -17,7 +17,8 @@ pub use font::{FontRequest, resolve_font};
 pub use json::Json;
 pub use run::{
     RunConfig, Script, affects_detected_configs, create_run_configs, detected_run_configs,
-    load_run_configs, run_configs_path, script, script_config, split_args,
+    load_run_configs, run_configs_path, script, script_config, script_language_command,
+    script_language_ids, split_args,
 };
 pub use state::{
     BADGE_COLORS, MAX_RECENT, Session, State, Tab, TerminalSession, WindowFrame, state_path,

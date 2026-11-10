@@ -205,6 +205,7 @@ fn draw_nav_row(
         SettingsPage::Appearance => icons::appearance(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Editor => icons::code(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Format => icons::format(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Run => icons::console(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Terminal => icons::console(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Modules => icons::modules(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Keys => icons::keyboard(frame, icon, p.text_muted, layout.nav),
@@ -353,14 +354,18 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             let bottom = Rect::new(x, bottom.y, room, bottom.h);
             match row.setting {
                 // 正在编辑命令时，原有的状态和警告不再显示，改为提示如何确认。
-                Setting::FormatCommand(_) | Setting::FixCommand(_) if editing => {
+                Setting::FormatCommand(_)
+                | Setting::FixCommand(_)
+                | Setting::ScriptCommand(_)
+                    if editing =>
+                {
                     let hint = t!("settings-command-edit-hint");
                     let hint = ellipsize(frame, hint, app.fonts.ui_small, room);
                     ui_text_small(frame, app, x, bottom, &hint, p.text_muted, clip);
                 }
-                Setting::FormatCommand(_) | Setting::FixCommand(_) => {
-                    draw_tool_detail(app, frame, row.setting, bottom)
-                }
+                Setting::FormatCommand(_)
+                | Setting::FixCommand(_)
+                | Setting::ScriptCommand(_) => draw_tool_detail(app, frame, row.setting, bottom),
                 // Git 模块开着但用不了：说明换成原因。
                 Setting::GitModule
                     if app.git_enabled()
@@ -684,9 +689,9 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
             app.config.terminal_font.clone(),
             t!("settings-terminal-font-default"),
         ),
-        Setting::FormatCommand(_) | Setting::FixCommand(_) => {
-            (None, t!("settings-command-placeholder"))
-        }
+        Setting::FormatCommand(_)
+        | Setting::FixCommand(_)
+        | Setting::ScriptCommand(_) => (None, t!("settings-command-placeholder")),
         Setting::TerminalShell => (None, t!("settings-terminal-shell-placeholder")),
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };

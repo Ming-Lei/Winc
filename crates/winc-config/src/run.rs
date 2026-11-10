@@ -239,6 +239,35 @@ pub fn script(file: &Path) -> Option<Script> {
     })
 }
 
+/// 可运行脚本的语言 id，顺序与语言菜单一致。
+pub fn script_language_ids() -> &'static [&'static str] {
+    &[
+        "python", "javascript", "typescript", "ruby", "bash", "perl", "lua", "php", "go",
+    ]
+}
+
+/// 返回语言 `id` 的脚本默认解释器命令（Windows 上 `.py` 用 `python`）；不可运行脚本时返回 `None`。
+pub fn script_language_command(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "python" => {
+            if cfg!(windows) {
+                "python"
+            } else {
+                "python3"
+            }
+        }
+        "javascript" => "node",
+        "typescript" => "node --experimental-strip-types",
+        "ruby" => "ruby",
+        "bash" => "bash",
+        "perl" => "perl",
+        "lua" => "lua",
+        "php" => "php",
+        "go" => "go run",
+        _ => return None,
+    })
+}
+
 /// 返回运行脚本文件 `file` 的配置：解释器按扩展名识别，工作目录是文件所在目录。
 ///
 /// 工作目录用绝对路径（相对导入、`__file__`、`process.cwd()` 等按此解析），不受是否打开目录

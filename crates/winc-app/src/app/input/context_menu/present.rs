@@ -339,6 +339,10 @@ impl App {
                 let removable = row.is_some_and(|r| r.removable);
                 tool_menu(task, id, install, removable)
             }
+            &MenuTarget::Script(id) => {
+                let removable = self.config.script_commands.contains_key(id);
+                script_menu(removable)
+            }
             MenuTarget::Project => {
                 let root = self.editor.root();
                 let current = root.and_then(|r| self.state.recent.iter().position(|p| p == r));

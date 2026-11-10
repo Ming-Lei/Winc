@@ -184,6 +184,13 @@ impl App {
             MenuTarget::Tool(task, id) => {
                 self.settings_choose_tool(tool_setting(task, id), command)
             }
+            MenuTarget::Script(id) => match command {
+                MenuCommand::ToolCustom => {
+                    self.settings_start_editing(Setting::ScriptCommand(id))
+                }
+                MenuCommand::ToolRemove => self.settings_commit_script(id, None),
+                _ => {}
+            },
             MenuTarget::Indent(id)
             | MenuTarget::LineEnding(id)
             | MenuTarget::Encoding(id)

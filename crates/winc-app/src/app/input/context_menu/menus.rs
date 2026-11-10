@@ -641,6 +641,28 @@ pub fn tool_menu(task: Task, language: &str, install: bool, removable: bool) -> 
     menu
 }
 
+/// 返回运行页中一种语言的脚本解释器菜单：自定义命令、恢复默认（清空用户设置）。
+pub fn script_menu(removable: bool) -> Vec<MenuEntry> {
+    use MenuEntry::{Item, Separator};
+
+    fn group(menu: &mut Vec<MenuEntry>, items: Vec<MenuEntry>) {
+        if items.is_empty() {
+            return;
+        }
+        if !menu.is_empty() {
+            menu.push(Separator);
+        }
+        menu.extend(items);
+    }
+
+    let mut menu = Vec::new();
+    group(&mut menu, vec![Item(MenuCommand::ToolCustom, true)]);
+    if removable {
+        group(&mut menu, vec![Item(MenuCommand::ToolRemove, true)]);
+    }
+    menu
+}
+
 /// 返回缩进宽度子菜单的标题：空格缩进时为「缩进大小」（宽度是空格数），制表符缩进时为「制表符长度」
 /// （宽度是一个制表符占的列数）。
 pub fn indent_size_title(indent: Indent) -> &'static str {

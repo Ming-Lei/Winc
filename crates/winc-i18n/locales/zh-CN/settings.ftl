@@ -12,11 +12,13 @@ settings-search-empty = 未找到匹配的设置
 settings-page-appearance = 外观
 settings-page-editor = 编辑器
 settings-page-format = 格式化
+settings-page-run = 运行
 settings-page-terminal = 终端
 settings-page-modules = 模块
 settings-page-keys = 快捷键
 settings-page-about = 关于
 settings-section-format-tools = 格式化工具
+settings-section-run-interpreters = 脚本解释器
 settings-section-fix-tools = 修复工具
 
 ## 设置项的名称。
@@ -143,6 +145,7 @@ settings-terminal-option-as-meta-right = 右侧 ⌥
 settings-terminal-option-as-meta-both = 两侧 ⌥
 settings-terminal-option-as-meta-none = 无
 settings-command-placeholder = 输入命令，{ "{file}" } 表示文件路径
+settings-run-default-path = 默认（PATH）：{ $command }
 settings-command-edit-hint = 按 { common-key-enter } 保存，按 Esc 取消
 settings-font-not-installed = 未安装字体「{ $name }」
 settings-font-file-not-found = 未找到字体文件「{ $name }」

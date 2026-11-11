@@ -26,18 +26,16 @@ of releasing it again. To retry a failed build, rerun the Release workflow on th
 
 ## Version and source
 
-The release version is `version` in the `[workspace.package]` section of `Cargo.toml`. To prepare
-a version:
+The release version is the single line of the `VERSION` file at the repository root. To prepare a
+version, edit that file, commit it, then merge into `main`. The program reads the same file at
+compile time through the `winc-version` crate.
 
-```sh
-# Edit [workspace.package] version in Cargo.toml, then refresh the workspace entries in Cargo.lock.
-cargo update --workspace
-```
-
-Commit `Cargo.toml` and `Cargo.lock` together, then merge into `main`. `cargo update --workspace`
-changes only the workspace's own entries, never dependency versions. The Release workflow rejects
-a `Cargo.lock` that does not match `Cargo.toml`, a tag that does not equal `v<version>`, a checkout
-that differs from the workflow's immutable commit, or a tag that moved after the build began.
+The crates themselves carry no version: Cargo hashes a package's version into its build
+artifacts, so a version in `Cargo.toml` would rebuild every crate from scratch on each release and
+leave the old artifacts in `target`. `Cargo.lock` therefore does not change with the release
+version. The Release workflow rejects a `Cargo.lock` that does not match `Cargo.toml`, a tag that
+does not equal `v<version>`, a checkout that differs from the workflow's immutable commit, or a
+tag that moved after the build began.
 
 The Release workflow can also be dispatched manually. With `release_tag` set, a branch-context request
 dispatches a new run on that existing tag. With no tag selected, a branch run builds downloadable
@@ -90,7 +88,7 @@ binaries. The Arch package uses pacman for updates.
 Each release also has four signed appcasts for the in-app updater: `appcast-macos-arm64.xml`,
 `appcast-macos-x86_64.xml`, `appcast-linux.xml`, and `appcast-windows.xml`. They list the dmg, the
 AppImage, and the NSIS and MSI installers, each with its EdDSA signature; the deb and the portable
-zip are downloads only. `SHA256SUMS` covers every file.
+zip are downloads only. `SHA256SUMS` covers the assets assembled before publication.
 
 ### Update channel (winc.si)
 
@@ -126,8 +124,8 @@ following repository secrets.
 | `WINC_ARCH_SIGNING_PASSPHRASE` | Passphrase for the Arch signing key |
 | `WINC_ARCH_SIGNING_FINGERPRINT` | Full 40-digit uppercase fingerprint without spaces |
 
-Download `winc-arch-repo-<tag>` from the workflow's Artifacts and deploy its contents under
-`https://winc.si/releases/arch/`. Deploy releases in version order. Upload the
+After signing succeeds, download `winc-arch-repo-<tag>.zip` from the release's Assets and deploy its
+contents under `https://winc.si/releases/arch/`. Deploy releases in version order. Upload the
 versioned package and its signature before publishing the indexes and matching signatures together.
 Use the generated installer and publish the full fingerprint on the download page after verifying
 the first deployment.
@@ -135,7 +133,8 @@ the first deployment.
 For local signing, set the same fingerprint and run `bash release/linux/arch/prepare-repo.sh --tag
 v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key and an authenticated `gh`.
 
-On Arch x86_64, download and run the installer to configure the signed repository and install Winc.
+On x86_64 Arch Linux or CachyOS, download and run the installer to configure the signed repository
+and install Winc. The installer runs a full system upgrade and prompts for confirmation.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \

@@ -39,7 +39,7 @@ pub struct Modules {
 
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 8] = [
+    pub const ALL: [SettingsPage; 9] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,

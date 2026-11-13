@@ -5,13 +5,12 @@
 //! 换行风格、BOM）和检查外部修改。
 
 use std::borrow::Cow;
-use std::fs;
-use std::io::{self, BufReader, Read, Seek, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use winc_backend::fs::Stamp;
 
 use ropey::Rope;
 use winc_core::edit::{EditKind, Transaction};
@@ -25,6 +24,8 @@ use crate::Command;
 use crate::diff_view::DiffView;
 use crate::editing::cursors::others;
 use crate::editing::folding::{Folds, LineWindow, Tracked, WindowKey, WrapKey};
+use crate::editing::long_lines::WholeLines;
+use crate::editing::modal::Marks;
 use crate::editing::scopes::{self, FoldRange, Scope, ScopeMemo};
 use crate::navigation::bookmarks::Bookmarks;
 use content::Content;
@@ -475,6 +476,8 @@ pub struct Document {
     pub(crate) folds: Folds,
     /// 书签，按行号从小到大排列；文本变化时随之移动。
     pub(crate) bookmarks: Bookmarks,
+    /// 模态编辑层的标记与修改列表；文本变化时随之移动。
+    pub(crate) marks: Marks,
     /// CSV、TSV 按列对齐时每一列的起始位置，按（版本、Tab 宽度）缓存。
     columns: Option<ColumnsCache>,
     /// 上一次测量列宽时的文字和各列宽度；文字变化时只重新测量改动的行。
@@ -489,13 +492,15 @@ pub struct Document {
     pub(crate) wrap_pending: Option<WrapKey>,
     /// 最近使用的长行行内窗口（见 [`Document::line_window`]），最近使用的排在最后。
     pub(crate) windows: Mutex<Vec<(WindowKey, Arc<LineWindow>)>>,
+    /// 显示整行的行及其列索引，见 [`Document::shows_whole_line`]。
+    pub(crate) whole: WholeLines,
     /// 最近的若干次改动：（改动后的版本号，第一处改动所在的行），供
     /// `Document::unchanged_lines_since` 判断哪些行没有变。
     edits: std::collections::VecDeque<(u64, usize)>,
     /// 文档的文本：`rope`，或按需读取磁盘的大文件。
     pub(crate) text: Content,
     /// 最近一次读写时磁盘文件的修改时间。
-    disk_mtime: Option<SystemTime>,
+    disk_mtime: Option<Stamp>,
     /// 最近一次读写时磁盘文件的大小（字节，含 BOM），用于判断文件是否只在末尾追加了内容。
     disk_len: u64,
     /// 磁盘文件已被其他程序修改，而文档也有未保存的修改：任何一边的内容都不能被静默覆盖。
@@ -517,7 +522,7 @@ struct Loaded {
     /// 检测到的换行风格。
     line_ending: LineEnding,
     /// 读取时文件的修改时间。
-    mtime: Option<SystemTime>,
+    mtime: Option<Stamp>,
     /// 读取时文件的大小（字节）。
     len: u64,
 }
@@ -566,6 +571,7 @@ impl Document {
             grown: Vec::new(),
             folds: Folds::default(),
             bookmarks: Bookmarks::default(),
+            marks: Marks::default(),
             columns: None,
             column_widths: None,
             fold_cache: None,
@@ -573,6 +579,7 @@ impl Document {
             wrap_wanted: None,
             wrap_pending: None,
             windows: Mutex::new(Vec::new()),
+            whole: WholeLines::default(),
             edits: std::collections::VecDeque::new(),
             text,
             disk_mtime: None,
@@ -615,6 +622,13 @@ impl Document {
     pub fn output(id: DocumentId, title: &str, text: &str) -> Self {
         let mut document = Document::from_text(id, text);
         document.title = Some(title.to_owned());
+        document.readonly = true;
+        document
+    }
+
+    /// 创建只读、不对应文件的文档，与 `text` 共用同一份文本（克隆只增加引用计数）。
+    pub fn snapshot(id: DocumentId, text: Rope) -> Self {
+        let mut document = Document::from_content(id, Content::Rope(text));
         document.readonly = true;
         document
     }
@@ -719,6 +733,11 @@ impl Document {
         col: usize,
         tab_width: usize,
     ) -> usize {
+        if columns.is_none()
+            && let Some(cells) = self.long_col_to_cell(line, col, tab_width)
+        {
+            return cells;
+        }
         let content = self.text.line_content(line);
         match columns {
             Some(columns) => Aligned { columns, tab_width }.col_to_cell(content.slice(), col),
@@ -744,6 +763,11 @@ impl Document {
         cell: usize,
         tab_width: usize,
     ) -> usize {
+        if columns.is_none()
+            && let Some(col) = self.long_cell_to_col(line, cell, tab_width)
+        {
+            return col;
+        }
         let content = self.text.line_content(line);
         match columns {
             Some(columns) => Aligned { columns, tab_width }.cell_to_col(content.slice(), cell),
@@ -788,7 +812,7 @@ impl Document {
     ///
     /// `mtime` 是文件存在时的修改时间（记录在备份中）。有值时文件按已删除处理
     /// （[`Document::deleted_on_disk`]），自动保存不重建该文件，用户手动保存时才重新创建。
-    pub fn missing(id: DocumentId, path: PathBuf, mtime: Option<SystemTime>) -> Self {
+    pub fn missing(id: DocumentId, path: PathBuf, mtime: Option<Stamp>) -> Self {
         let mut document = Document::empty(id);
         document.set_path(path);
         document.disk_mtime = mtime;
@@ -901,6 +925,20 @@ impl Document {
         }
     }
 
+    /// 返回第 `line` 行（从 0 起）开头的近似高亮状态：从上方 `HIGHLIGHT_LOOKBACK` 行处推算。
+    ///
+    /// 供 [`Self::highlight_state`] 尚未推算到时绘制使用，远距离跳转后不先按普通文本着色；跨度
+    /// 超过回看行数的块注释和多行字符串仍可能着色错误，直到精确的状态推算完成。
+    pub fn approx_highlight_state(&mut self, line: usize) -> LineState {
+        match &self.text {
+            Content::Rope(rope) => self.highlighter.state_near(rope, line, HIGHLIGHT_LOOKBACK),
+            Content::Large(large) => {
+                self.highlighter
+                    .state_near(&**large, line, HIGHLIGHT_LOOKBACK)
+            }
+        }
+    }
+
     /// 返回已推算出的第 `line` 行（从 0 起）开头的高亮状态，不触发新的推算；尚未推算到时返回
     /// `None`。
     ///
@@ -1010,7 +1048,7 @@ impl Document {
     }
 
     /// 最近一次读写时磁盘文件的修改时间。
-    pub fn disk_mtime(&self) -> Option<SystemTime> {
+    pub fn disk_mtime(&self) -> Option<Stamp> {
         self.disk_mtime
     }
 
@@ -1023,7 +1061,7 @@ impl Document {
     pub fn restore_unsaved(
         &mut self,
         text: &str,
-        mtime: Option<SystemTime>,
+        mtime: Option<Stamp>,
         selection: Selection,
         conflict: bool,
     ) -> Option<bool> {
@@ -1061,6 +1099,8 @@ impl Document {
             text: &mut self.text,
             folds: &mut self.folds,
             bookmarks: &mut self.bookmarks,
+            whole: &mut self.whole,
+            marks: &mut self.marks,
         });
         self.selection = transaction.after.clamped(self.text.end_pos());
         let extra = transaction.extra_after.clone();

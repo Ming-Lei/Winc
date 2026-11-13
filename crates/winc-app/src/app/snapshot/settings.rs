@@ -300,11 +300,13 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, Setting::KeySearch);
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
-    // 向回走一步，回到模块页最后的终端开关，焦点回到浮层；再一步是 Git 开关；再走一步，回到
-    // 终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
+    // 向回走一步，回到模块页最后的远程开关，焦点回到浮层；再往回是终端开关和 Git 开关；再走
+    // 一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
+    app.settings_move(false);
+    assert_eq!(app.settings.selected, Setting::RemoteModule);
+    assert_eq!(app.focus, Focus::Settings);
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::TerminalModule);
-    assert_eq!(app.focus, Focus::Settings);
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
@@ -1453,15 +1455,16 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     };
     assert!(!listed(&app));
     assert_eq!(Setting::GitConfirmPush.page(), SettingsPage::Git);
+    assert_eq!(Setting::DiffInline.page(), SettingsPage::Git);
 
-    // 在模块页开启后立即列出，「推送前确认」在该页。
+    // 在模块页开启后立即列出，「推送前确认」与「单栏差异视图」在该页。
     app.settings_toggle(Setting::GitModule);
     assert!(listed(&app));
     app.settings_show_page(SettingsPage::Git);
     let rows: Vec<Setting> = (app.settings_layout().rows.iter())
         .map(|row| row.setting)
         .collect();
-    assert_eq!(rows, [Setting::GitConfirmPush]);
+    assert_eq!(rows, [Setting::GitConfirmPush, Setting::DiffInline]);
 
     // 配置文件中关闭 Git 模块：不再列出该页，停在该页时改到模块页。
     let mut config = app.config.clone();

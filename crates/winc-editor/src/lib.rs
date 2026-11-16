@@ -30,7 +30,7 @@ pub use document::encoding::Encoding;
 pub use document::large::LargeText;
 pub use document::{
     COPY_LIMIT, DiskChange, Document, DocumentId, EDIT_LIMIT, LARGE_FILE, OpenError, PictureState,
-    PreviewKind, PreviewMode, TableState, TableView, Unsupported, looks_binary,
+    PreviewKind, PreviewMode, Reading, TableState, TableView, Unsupported, looks_binary,
 };
 pub use document::{editorconfig, encoding};
 pub use editing::command::Command;
@@ -253,6 +253,47 @@ impl Editor {
     /// 已存在标题相同且没有对应文件的标签时，替换其内容而不新开标签。返回标签序号（从 0 起）。
     pub fn show_output(&mut self, title: &str, text: &str) -> usize {
         self.show_readonly(title, |id| Document::output(id, title, text))
+    }
+
+    /// 更新标题为 `title` 的输出标签，不切换标签：`more` 有值时接在末尾（光标和滚动位置不动），
+    /// 否则把内容换成 `text`。没有这个标签时不做事，返回是否有这个标签。
+    ///
+    /// 用于输出在标签开着的时候有了新内容：标签已经关闭时不再打开。
+    pub fn refresh_output(&mut self, title: &str, more: Option<&str>, text: &str) -> bool {
+        let found = (self.documents.iter_mut())
+            .find(|d| d.path.is_none() && d.title.as_deref() == Some(title));
+        let Some(slot) = found else {
+            return false;
+        };
+        match more {
+            Some(more) => slot.append_output(more),
+            None => {
+                let fresh = Document::output(slot.id, title, text);
+                replace_document(slot, fresh);
+            }
+        }
+        true
+    }
+
+    /// 在只读的阅读标签中显示 `reading`，标签标题为 `title`，并切换到该标签。
+    ///
+    /// 已存在标题相同且没有对应文件的标签时，替换其内容而不新开标签。返回标签序号（从 0 起）。
+    pub fn show_reading(&mut self, title: &str, reading: Reading) -> usize {
+        self.show_readonly(title, |id| Document::reading(id, title, reading))
+    }
+
+    /// 把阅读标签 `id` 的内容换成 `reading`，标题不变，不切换标签；返回是否有这个标签。
+    ///
+    /// 用于后台取回的内容到达时：标签在此期间已经关闭时不再打开。
+    pub fn update_reading(&mut self, id: DocumentId, reading: Reading) -> bool {
+        let found = (self.documents.iter_mut()).find(|d| d.id == id && d.reading.is_some());
+        let Some(slot) = found else {
+            return false;
+        };
+        let title = slot.title.clone().unwrap_or_default();
+        let fresh = Document::reading(id, &title, reading);
+        replace_document(slot, fresh);
+        true
     }
 
     /// 在标签 `slot` 中显示并排差异（替换原有内容）并切换到该标签，返回标签序号（从 0 起）。

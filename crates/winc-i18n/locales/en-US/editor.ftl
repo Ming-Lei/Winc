@@ -3,6 +3,8 @@
 editor-preview-failed = Couldn’t show the preview: { $reason }
 editor-show-source = Show Source
 editor-reading = Reading “{ $name }”…
+editor-reading-failed = Couldn’t load “{ $name }”
+editor-open-in-browser = View in Browser
 editor-open-anyway = Open Anyway
 editor-open-with-default-app = Open with Default App
 editor-retry = Retry
@@ -141,6 +143,7 @@ editor-unreadable-failed = Reading failed ({ $error })
 editor-unsupported-image = Image
 editor-unsupported-workbook = Workbook
 editor-unsupported-docx = Word document
+editor-unsupported-epub = EPUB book
 editor-unsupported-pdf = PDF document
 editor-unsupported-binary = Binary file or unsupported text encoding ({ $size }); can’t show a preview
 editor-unsupported-too-large = The file is too large ({ $size } GB, limit { $limit } GB) to show a preview

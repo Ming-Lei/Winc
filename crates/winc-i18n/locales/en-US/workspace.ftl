@@ -31,6 +31,9 @@ workspace-outline-off = The outline is turned off in Settings
 workspace-outline-no-file = Open a file to see its outline
 workspace-outline-unsupported = The current tab has no outline
 workspace-outline-too-large = The file is too large to show an outline
+workspace-outline-reading = Reading the table of contents…
+workspace-outline-no-bookmarks = This PDF has no bookmarks
+workspace-outline-no-contents = This book has no table of contents
 workspace-outline-no-symbols = No symbols found in this file
 workspace-sidebar-commit = Commit
 workspace-sidebar-no-folder = No Folder Open
@@ -75,6 +78,10 @@ workspace-start-open = Open File or Folder
 workspace-start-open-file = Open File
 workspace-start-open-folder = Open Folder
 workspace-start-version = Version { $version }
+workspace-start-module-remote = SSH Remote
+workspace-start-theme = Theme
+workspace-start-setup-intro = Your personal workspace starts here.
+workspace-start-setup-done = Done
 workspace-start-section-start = Start
 workspace-start-section-recent = Recent
 
@@ -254,6 +261,10 @@ workspace-remote-error-not-connected = not connected to the remote host
 workspace-remote-reconnecting = The connection to { $host } was lost. Reconnecting…
 workspace-notice-reconnect = Reconnect
 workspace-notice-cancel = Cancel
+workspace-notice-release-notes = View Release Notes
+workspace-release-notes-title = Release Notes
+workspace-release-notes-missing = There are no release notes for { $version } yet. Earlier releases are shown below.
+workspace-release-notes-updated = Winc was updated to { $version }
 workspace-rename-branch-title = Rename Branch
 workspace-rename-branch-placeholder = Branch name
 workspace-rename-branch-hint = Currently { $name } · { common-key-enter } Rename
@@ -263,6 +274,10 @@ workspace-tag-hint = From { $commit } · { common-key-enter } Create
 
 ## Quick open
 
+workspace-picker-languages = { $count ->
+        [one] { $count } language
+       *[other] { $count } languages
+    }
 workspace-picker-commands = { $count ->
         [one] { $count } command
        *[other] { $count } commands
@@ -288,11 +303,13 @@ workspace-picker-folder-empty = No files in this folder
 workspace-picker-no-matching-files = No matching files. Ignored files aren’t searched.
 workspace-picker-recently-opened = Recently opened
 workspace-picker-no-matching-commands = No matching commands
+workspace-picker-no-matching-languages = No matching languages
 workspace-picker-recently-used = Recently used
 workspace-picker-symbols-too-large = File too large to list symbols
 workspace-picker-no-symbols = No symbols found in this file
 workspace-picker-no-matching-symbols = No matching symbols
 workspace-picker-folders-placeholder = Search folders by name or path…
+workspace-picker-languages-placeholder = Select a language…
 workspace-picker-folders-new-window = { $platform ->
     [macos] ⌥↩
    *[other] Alt+Enter

@@ -3,6 +3,8 @@
 editor-preview-failed = 无法显示预览：{ $reason }
 editor-show-source = 显示源代码
 editor-reading = 正在读取「{ $name }」…
+editor-reading-failed = 无法读取「{ $name }」
+editor-open-in-browser = 在浏览器中查看
 editor-open-anyway = 仍然打开
 editor-open-with-default-app = 用默认应用打开
 editor-retry = 重试
@@ -123,6 +125,7 @@ editor-unreadable-failed = 读取失败（{ $error }）
 editor-unsupported-image = 图片
 editor-unsupported-workbook = 工作簿
 editor-unsupported-docx = Word 文档
+editor-unsupported-epub = EPUB 电子书
 editor-unsupported-pdf = PDF 文档
 editor-unsupported-binary = 二进制文件或不支持的文本编码（{ $size }），无法显示预览
 editor-unsupported-too-large = 文件过大（{ $size } GB，上限 { $limit } GB），无法显示预览

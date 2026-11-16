@@ -149,6 +149,17 @@ impl TableView {
     }
 }
 
+/// 阅读标签的内容：由界面在后台取回，取回之前和未能取回时编辑区显示相应的说明。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reading {
+    /// 正在取回。
+    Loading,
+    /// 已取回的 Markdown 原文，排版后显示。
+    Ready(Arc<str>),
+    /// 未能取回。
+    Failed,
+}
+
 /// 可预览文件的种类，见 `Document::preview_kind`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewKind {
@@ -182,6 +193,8 @@ pub enum Unsupported {
     Workbook,
     /// docx 文字文档：编辑区显示转换成 Markdown 后排版的阅读视图，由界面读取和转换。
     Docx,
+    /// EPUB 电子书：与 [`Unsupported::Docx`] 相同，显示转换成 Markdown 后排版的阅读视图。
+    Epub,
     /// PDF（只在能预览 PDF 的平台上，见 `winc_preview::pdf::supported`）：
     /// 编辑区逐页显示，由界面读取和渲染。
     Pdf,
@@ -191,6 +204,13 @@ pub enum Unsupported {
     TooLarge(u64),
     /// 无法读取，例如没有权限或文件不存在；内容是显示给用户的原因。
     Unreadable(String),
+}
+
+impl Unsupported {
+    /// 是否显示转换成 Markdown 后排版的阅读视图（docx、EPUB）。
+    pub fn reads_as_markdown(&self) -> bool {
+        matches!(self, Unsupported::Docx | Unsupported::Epub)
+    }
 }
 
 impl From<OpenError> for Unsupported {
@@ -213,6 +233,7 @@ impl std::fmt::Display for Unsupported {
             Unsupported::Image => f.write_str(t!("editor-unsupported-image")),
             Unsupported::Workbook => f.write_str(t!("editor-unsupported-workbook")),
             Unsupported::Docx => f.write_str(t!("editor-unsupported-docx")),
+            Unsupported::Epub => f.write_str(t!("editor-unsupported-epub")),
             Unsupported::Pdf => f.write_str(t!("editor-unsupported-pdf")),
             Unsupported::Binary(size) => {
                 f.write_str(&t!("editor-unsupported-binary", size = size_text(*size)))
@@ -460,6 +481,8 @@ pub struct Document {
     rendered: bool,
     /// 不对应文件的只读标签（格式化工具的输出、安装说明）的标题。
     pub title: Option<String>,
+    /// 阅读标签的内容：编辑区显示排版后的 Markdown，没有可切换的源代码，文本为空。
+    pub reading: Option<Reading>,
     /// 文本每变化一次加 1，搜索结果等缓存据此判断是否失效。
     pub revision: u64,
     /// 滚动位置的首行（行，从 0 起，可以是小数，用于平滑滚动）。
@@ -563,6 +586,7 @@ impl Document {
             split: false,
             rendered: false,
             title: None,
+            reading: None,
             revision: 0,
             scroll_line: 0.0,
             scroll_x: 0.0,
@@ -623,6 +647,15 @@ impl Document {
         let mut document = Document::from_text(id, text);
         document.title = Some(title.to_owned());
         document.readonly = true;
+        document
+    }
+
+    /// 创建只读、不对应文件的阅读标签，标签上显示 `title`，内容为 `reading`。
+    pub fn reading(id: DocumentId, title: &str, reading: Reading) -> Self {
+        let mut document = Document::from_text(id, "");
+        document.title = Some(title.to_owned());
+        document.readonly = true;
+        document.reading = Some(reading);
         document
     }
 

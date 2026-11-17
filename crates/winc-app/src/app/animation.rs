@@ -42,7 +42,7 @@ const REVEAL_FROM: f32 = 0.7;
 pub(super) const DETAILS_FADE: Duration = Duration::from_millis(120);
 /// Markdown 预览的标题列表展开的时长，取 [`TREE_ANIMATION`]。
 ///
-/// 展开时卡片淡入，横线从指示条滑到各行。
+/// 展开时卡片从指示条处展开并淡入，横线从指示条移到各行；收起时相反，时长相同。
 pub(super) const TOC_FADE: Duration = TREE_ANIMATION;
 /// Markdown 预览的标题列表钉住、取消钉住的过渡时长，取 [`TREE_ANIMATION`]。
 ///
@@ -369,10 +369,12 @@ impl App {
         settle(&mut self.git.commit.fold_motion, |m| m.clock);
         settle(&mut self.git.commit.message_motion, |m| m.1);
         settle(&mut self.git.commit.button_motion, |m| m.1);
-        settle(&mut self.git.commit.stash_motion, |m| m.1);
+        settle(&mut self.git.commit.stashes.motion, |m| m.1);
+        settle(&mut self.git.commit.worktrees.motion, |m| m.1);
         settle(&mut self.panels.outline.motion, |m| m.1);
         settle(&mut self.panels.outline.fold, |f| f.clock);
         settle(&mut self.preview.markdown.toc_fade, |c| *c);
+        settle(&mut self.preview.markdown.toc_close, |c| *c);
         settle(&mut self.preview.markdown.toc_pin, |p| p.1);
         settle(&mut self.preview.markdown.toc_flash, |f| f.1);
         settle(&mut self.preview.markdown.anchor_flash, |f| f.1);
@@ -477,10 +479,12 @@ impl App {
             || self.git.commit.fold_motion.is_some()
             || self.git.commit.message_motion.is_some()
             || self.git.commit.button_motion.is_some()
-            || self.git.commit.stash_motion.is_some()
+            || self.git.commit.stashes.motion.is_some()
+            || self.git.commit.worktrees.motion.is_some()
             || self.panels.outline.motion.is_some()
             || self.panels.outline.fold.is_some()
             || self.preview.markdown.toc_fade.is_some()
+            || self.preview.markdown.toc_close.is_some()
             || self.preview.markdown.toc_pin.is_some()
             || self.preview.markdown.toc_flash.is_some()
             || self.preview.markdown.anchor_flash.is_some()

@@ -123,6 +123,7 @@ impl App {
                 match command {
                     MenuCommand::RenameTerminal => self.open_terminal_rename(index),
                     MenuCommand::CloseTerminal => self.close_terminal_tab(index),
+                    MenuCommand::CloseOtherTerminals => self.close_other_terminal_tabs(id),
                     _ => {}
                 }
             }
@@ -189,6 +190,13 @@ impl App {
                     self.set_render_whitespace(choice);
                 }
             }
+            MenuTarget::OpenWorktree => {
+                if let MenuCommand::OpenWorktree(i) = command
+                    && let Some(&choice) = winc_config::WorktreeOpen::ALL.get(i)
+                {
+                    self.set_open_worktree(choice);
+                }
+            }
             MenuTarget::VimClipboard => {
                 if let MenuCommand::VimClipboard(i) = command
                     && let Some(&choice) = winc_config::VimClipboard::ALL.get(i)
@@ -239,6 +247,11 @@ impl App {
                     self.set_terminal_position(right);
                 }
             }
+            MenuTarget::TerminalTabPosition => {
+                if let MenuCommand::TerminalTabPosition(right) = command {
+                    self.set_terminal_tab_position(right);
+                }
+            }
             MenuTarget::OptionAsMeta => {
                 if let MenuCommand::OptionAsMeta(i) = command
                     && let Some(&choice) = winc_config::OptionAsMeta::ALL.get(i)
@@ -287,11 +300,22 @@ impl App {
                 }
             }
             MenuTarget::Location(path, worktree) => match command {
+                MenuCommand::LocationThisWindow => {
+                    self.close_picker();
+                    self.switch_folder(&path);
+                }
                 MenuCommand::LocationNewWindow => self.open_in_new_window(&path),
                 MenuCommand::LocationReveal => self.reveal_in_file_manager(&path),
                 MenuCommand::LocationPrune => {
                     self.close_picker();
                     self.prune_worktrees();
+                }
+                MenuCommand::LocationMerge => {
+                    let tree = worktree.and_then(|i| self.git.worktrees.get(i));
+                    if let Some(name) = tree.and_then(|w| w.branch()).map(str::to_owned) {
+                        self.close_picker();
+                        self.git_merge_branch(name);
+                    }
                 }
                 MenuCommand::LocationRemove => {
                     if let Some(i) = worktree {
@@ -612,10 +636,7 @@ impl App {
         let lines: Vec<String> = if relative {
             paths.iter().filter_map(|p| self.relative_path(p)).collect()
         } else {
-            paths
-                .iter()
-                .map(|p| winc_backend::native_lossy(p).into_owned())
-                .collect()
+            paths.iter().map(|p| path_to_copy(p)).collect()
         };
         if lines.is_empty() {
             return;
@@ -667,13 +688,9 @@ impl App {
     ///
     /// 把「包含」填成 `./相对路径`，并展开过滤条件。
     pub(in crate::app) fn find_in_folder(&mut self, path: &Path) {
-        let dir = if winc_backend::fs::is_dir(path) {
-            path
-        } else {
-            path.parent().unwrap_or(path)
-        };
+        let dir = self.folder_of(path);
         let include = self
-            .relative_path(dir)
+            .relative_path(&dir)
             .map(|relative| format!("./{relative}"))
             .unwrap_or_default();
 
@@ -803,18 +820,13 @@ impl App {
         }
 
         if self.window.handle.is_some() {
-            // 远端主机上的文件不经过废纸篓，直接删除：确认时说明无法恢复。
-            let permanent = winc_backend::is_remote(root);
+            // 远端主机上和 WSL 发行版中的文件不经过废纸篓，直接删除：确认时说明无法恢复。
+            let permanent = crate::system::has_no_trash(root, cfg!(windows));
             let message = match paths.as_slice() {
                 [path] => {
                     let name = winc_editor::display_name(path);
                     // 类别取自文件树：远端的路径不能在界面线程上查询。
-                    let folder = (self.editor.workspace.as_ref())
-                        .and_then(|ws| ws.rows().iter().find(|entry| entry.path == *path))
-                        .map_or_else(
-                            || winc_backend::fs::is_dir(path),
-                            |entry| entry.kind == winc_editor::EntryKind::Dir,
-                        );
+                    let folder = self.is_folder(path);
                     match (folder, permanent) {
                         (true, false) => t!("common-trash-confirm-folder", name = name),
                         (false, false) => t!("common-trash-confirm-item", name = name),
@@ -873,7 +885,7 @@ impl App {
     fn entries_deleted(&mut self, paths: Vec<PathBuf>, results: Vec<std::io::Result<()>>) {
         let permanent = paths
             .first()
-            .is_some_and(|path| winc_backend::is_remote(path));
+            .is_some_and(|path| crate::system::has_no_trash(path, cfg!(windows)));
         let mut deleted = Vec::new();
         for (path, result) in paths.into_iter().zip(results) {
             match result {
@@ -978,4 +990,13 @@ fn tree_tool_of(command: MenuCommand) -> Option<TreeTool> {
         MenuCommand::TreeLocate => TreeTool::Locate,
         _ => return None,
     })
+}
+
+/// 返回复制路径时给出的文字：WSL 发行版中的路径给出发行版内的写法（`/home/…`），拿到那个
+/// 发行版的终端里可以直接使用；其余路径照所在系统的写法。
+fn path_to_copy(path: &Path) -> String {
+    match winc_editor::wsl::locate_here(path) {
+        Some(place) => place.path,
+        None => winc_backend::native_lossy(path).into_owned(),
+    }
 }

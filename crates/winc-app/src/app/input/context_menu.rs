@@ -33,7 +33,28 @@ pub(crate) use popup::{
     folder_rows,
 };
 pub(crate) use present::MenuIcon;
-pub use present::MenuLabel;
+
+/// 菜单项上显示的文字：标题、标题下方的一行小字，以及悬停提示。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuLabel {
+    /// 标题。
+    pub title: String,
+    /// 标题下方的小字。
+    pub subtitle: Option<String>,
+    /// 悬停提示。
+    pub tooltip: Option<String>,
+}
+
+impl MenuLabel {
+    /// 只有标题的文字。
+    pub(crate) fn plain(title: &str) -> MenuLabel {
+        MenuLabel {
+            title: title.to_owned(),
+            subtitle: None,
+            tooltip: None,
+        }
+    }
+}
 
 /// 菜单项左边图标的宽和高（逻辑像素），等于 `icons::folder` 绘制的目录图标的尺寸 15×12。
 const MENU_ICON: (f32, f32) = (15.0, 12.0);
@@ -131,10 +152,14 @@ pub enum MenuCommand {
     CloseFolder,
     /// 提交视图「⋯」：新建工作树（输入新分支的名字）。
     NewWorktree,
+    /// 位置选择器的操作菜单：在当前窗口打开这个位置。
+    LocationThisWindow,
     /// 位置选择器的操作菜单：在新窗口打开这个位置。
     LocationNewWindow,
     /// 位置选择器的操作菜单：在系统的文件管理器里显示。
     LocationReveal,
+    /// 位置选择器的操作菜单：把这个工作树的分支合并到当前分支。
+    LocationMerge,
     /// 位置选择器的操作菜单：移除这个工作树。
     LocationRemove,
     /// 位置选择器的操作菜单：清理目录已不存在的工作树。
@@ -174,6 +199,9 @@ pub enum MenuCommand {
     /// 设置中「Vim 剪贴板」菜单的一项，参数为
     /// [`VimClipboard::ALL`](winc_config::VimClipboard::ALL) 中的序号（从 0 起）。
     VimClipboard(usize),
+    /// 设置中「打开工作树」菜单的一项，参数为
+    /// [`WorktreeOpen::ALL`](winc_config::WorktreeOpen::ALL) 中的序号（从 0 起）。
+    OpenWorktree(usize),
     /// 设置中「默认 Shell」菜单的一项：`None` 为系统默认，`Some(i)` 为检测到的第 `i` 个 shell
     /// （从 0 起）。
     DefaultShell(Option<usize>),
@@ -193,6 +221,8 @@ pub enum MenuCommand {
     TextWidth(usize),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
+    /// 设置中终端「标签位置」菜单的一项：`true` 为右侧，`false` 为顶部。
+    TerminalTabPosition(bool),
     /// 设置中「Meta 键」菜单的一项，参数为
     /// [`OptionAsMeta::ALL`](winc_config::OptionAsMeta::ALL) 中的序号（从 0 起）。
     OptionAsMeta(usize),
@@ -329,6 +359,8 @@ pub enum MenuCommand {
     LogCompareWithLocal,
     /// 日志：转到提交号、分支或标签。
     LogGoTo,
+    /// 日志里的提交：与输入的提交号、分支或标签比较。
+    LogCompareRevision,
     /// 编辑区：开关逐行追溯（开着时打勾）。
     ToggleBlame,
     /// 提交视图「⋯」：储藏改动（输入说明）。
@@ -407,6 +439,8 @@ pub enum MenuCommand {
     /// 终端标签：改名字。
     RenameTerminal,
     CloseTerminal,
+    /// 终端标签：关闭其他终端标签。
+    CloseOtherTerminals,
     /// 终端：右键点着的命令块的命令行。
     CopyCommand,
     /// 终端：右键点着的命令块的整段输出。
@@ -475,11 +509,15 @@ impl MenuCommand {
             MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
             MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
             MenuCommand::TerminalPosition(true) => t!("settings-terminal-position-right"),
+            MenuCommand::TerminalTabPosition(false) => t!("settings-terminal-tab-position-top"),
+            MenuCommand::TerminalTabPosition(true) => t!("settings-terminal-tab-position-right"),
             MenuCommand::OptionAsMeta(i) => winc_config::OptionAsMeta::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::option_as_meta_label(choice)),
             MenuCommand::NewWorktree => t!("menu-new-worktree"),
+            MenuCommand::LocationThisWindow => t!("git-location-this-window"),
             MenuCommand::LocationNewWindow => t!("git-location-new-window"),
+            MenuCommand::LocationMerge => t!("git-branch-merge-into-current"),
             MenuCommand::LocationRemove => t!("git-location-remove"),
             // 文字来自当时的分支和位置（`App::menu_label`）。
             MenuCommand::StatusPlace(_) => "",
@@ -516,6 +554,7 @@ impl MenuCommand {
             MenuCommand::LogCopyOid => t!("menu-log-copy-oid"),
             MenuCommand::LogCopyShortOid => t!("menu-log-copy-short-oid"),
             MenuCommand::LogGoTo => t!("menu-log-go-to"),
+            MenuCommand::LogCompareRevision => t!("menu-log-compare-revision"),
             MenuCommand::LogCopyMessage => t!("menu-log-copy-message"),
             MenuCommand::LogCopyPatch => t!("menu-log-copy-patch"),
             MenuCommand::LogCompareWithLocal => t!("menu-log-compare-with-local"),
@@ -560,6 +599,7 @@ impl MenuCommand {
             MenuCommand::NewTerminal => t!("cmd-new-terminal"),
             MenuCommand::RenameTerminal => t!("cmd-rename-file"),
             MenuCommand::CloseTerminal => t!("menu-terminal-close"),
+            MenuCommand::CloseOtherTerminals => t!("cmd-close-other-tabs"),
             MenuCommand::CopyCommand => t!("menu-terminal-copy-command"),
             MenuCommand::CopyOutput => t!("menu-terminal-copy-output"),
             MenuCommand::Rerun => t!("menu-terminal-rerun"),
@@ -602,6 +642,9 @@ impl MenuCommand {
             MenuCommand::VimClipboard(i) => winc_config::VimClipboard::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::vim_clipboard_label(choice)),
+            MenuCommand::OpenWorktree(i) => winc_config::WorktreeOpen::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::open_worktree_label(choice)),
             MenuCommand::Locale(i) => winc_i18n::LocaleChoice::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::locale_label(choice)),
@@ -767,6 +810,8 @@ pub enum MenuTarget {
     Whitespace,
     /// 设置的编辑器页中的「Vim 剪贴板」。
     VimClipboard,
+    /// 设置的 Git 页中的「打开工作树」。
+    OpenWorktree,
     /// 设置的外观页中的「界面缩放」。
     Zoom,
     /// 设置的外观页中的「背景图片」。
@@ -779,6 +824,8 @@ pub enum MenuTarget {
     DefaultShell,
     /// 设置的终端页中的「位置」。
     TerminalPosition,
+    /// 设置的终端页中的「标签位置」。
+    TerminalTabPosition,
     /// 设置的终端页中的「Meta 键」。
     OptionAsMeta,
     /// 设置中字体一行的下拉按钮。

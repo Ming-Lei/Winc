@@ -209,6 +209,8 @@ pub fn log_commit_menu(enabled: bool, branch: &str, tags: &[&str]) -> Vec<MenuEn
         Item(LogCopyMessage, true),
         Item(LogCopyPatch, true),
         Separator,
+        Item(LogCompareRevision, true),
+        Separator,
         Item(LogGoTo, true),
     ]);
     menu
@@ -536,6 +538,13 @@ pub fn locale_menu() -> Vec<MenuEntry> {
         .collect()
 }
 
+/// 返回「打开工作树」菜单的菜单项，当前的选择打勾。
+pub fn open_worktree_menu() -> Vec<MenuEntry> {
+    (0..winc_config::WorktreeOpen::ALL.len())
+        .map(|i| MenuEntry::Item(MenuCommand::OpenWorktree(i), true))
+        .collect()
+}
+
 /// 返回「Vim 剪贴板」菜单的菜单项，当前的选择打勾。
 pub fn vim_clipboard_menu() -> Vec<MenuEntry> {
     (0..winc_config::VimClipboard::ALL.len())
@@ -583,6 +592,13 @@ pub fn background_menu() -> Vec<MenuEntry> {
 pub fn terminal_position_menu() -> Vec<MenuEntry> {
     [false, true]
         .map(|right| MenuEntry::Item(MenuCommand::TerminalPosition(right), true))
+        .into()
+}
+
+/// 返回终端「标签位置」菜单的菜单项：顶部、右侧，当前的选择打勾。
+pub fn terminal_tab_position_menu() -> Vec<MenuEntry> {
+    [false, true]
+        .map(|right| MenuEntry::Item(MenuCommand::TerminalTabPosition(right), true))
         .into()
 }
 

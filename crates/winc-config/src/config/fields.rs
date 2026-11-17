@@ -509,6 +509,8 @@ const TERMINAL: &[Field] = &[
     bool_field!("prompt", terminal_prompt),
     bool_field!("copyOnSelect", terminal_copy_on_select),
     bool_field!("boldIsBright", terminal_bold_is_bright),
+    bool_field!("verticalTabs", terminal_vertical_tabs),
+    bool_field!("applicationPriority", terminal_application_priority),
     Field {
         // `position` 在配置里是字符串，读入后只保留是否在右边。
         key: "position",
@@ -567,6 +569,7 @@ const TERMINAL: &[Field] = &[
 const GIT: &[Field] = &[
     bool_field!("enabled", git_enabled),
     bool_field!("confirmPush", git_confirm_push),
+    bool_field!("rememberCredentials", git_remember_credentials),
     bool_field!("systemProxy", git_system_proxy),
     bool_field!("inlineBlame", git_inline_blame),
     bool_field!("autoFetch", git_auto_fetch),
@@ -593,7 +596,30 @@ const GIT: &[Field] = &[
                 .map(|depth| Json::Number(depth as f64))
         },
     },
+    string_field!("path", git_path),
     string_field!("worktreeRoot", git_worktree_root),
+    Field {
+        key: "openWorktree",
+        read: |config, value, name, problems| {
+            config.git_open_worktree = match value.as_str() {
+                Some("ask") => Some(WorktreeOpen::Ask),
+                Some("newWindow") => Some(WorktreeOpen::NewWindow),
+                Some("currentWindow") => Some(WorktreeOpen::CurrentWindow),
+                _ => {
+                    problems.push(t!("config-open-worktree-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.git_open_worktree? {
+                WorktreeOpen::Ask => "ask",
+                WorktreeOpen::NewWindow => "newWindow",
+                WorktreeOpen::CurrentWindow => "currentWindow",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
     Field {
         key: "worktreeCopy",
         read: |config, value, name, problems| {

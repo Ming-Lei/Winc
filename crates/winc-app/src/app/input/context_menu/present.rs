@@ -4,28 +4,6 @@ use winc_i18n::t;
 
 use super::*;
 
-/// 菜单项上显示的文字：标题、标题下方的一行小字，以及悬停提示。
-#[derive(Debug, Clone, PartialEq)]
-pub struct MenuLabel {
-    /// 标题。
-    pub title: String,
-    /// 标题下方的小字。
-    pub subtitle: Option<String>,
-    /// 悬停提示。
-    pub tooltip: Option<String>,
-}
-
-impl MenuLabel {
-    /// 只有标题的文字。
-    pub(crate) fn plain(title: &str) -> MenuLabel {
-        MenuLabel {
-            title: title.to_owned(),
-            subtitle: None,
-            tooltip: None,
-        }
-    }
-}
-
 /// 菜单中一项需要的数据，由 `Prepared` 持有，弹出菜单时借给系统菜单。
 #[cfg(target_os = "macos")]
 struct Prepared {
@@ -346,12 +324,14 @@ impl App {
                 .collect(),
             MenuTarget::Whitespace => whitespace_menu(),
             MenuTarget::VimClipboard => vim_clipboard_menu(),
+            MenuTarget::OpenWorktree => open_worktree_menu(),
             MenuTarget::DefaultShell => default_shell_menu(self.terminal.shells.len()),
             MenuTarget::Zoom => zoom_menu(),
             MenuTarget::BackgroundImage => background_menu(),
             MenuTarget::BackgroundFit => background_fit_menu(),
             MenuTarget::TextWidth => text_width_menu(),
             MenuTarget::TerminalPosition => terminal_position_menu(),
+            MenuTarget::TerminalTabPosition => terminal_tab_position_menu(),
             MenuTarget::OptionAsMeta => option_as_meta_menu(),
             &MenuTarget::Font(setting) => font_menu(setting, self.font_value(setting).as_deref()),
             &MenuTarget::Tool(task, id) => {
@@ -498,6 +478,10 @@ impl App {
                 MenuEntry::Item(MenuCommand::RenameTerminal, true),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuCommand::CloseTerminal, true),
+                MenuEntry::Item(
+                    MenuCommand::CloseOtherTerminals,
+                    self.terminal.tabs.len() > 1,
+                ),
             ],
             &MenuTarget::Terminal(block) => {
                 let Some(tab) = self.terminal.tab() else {
@@ -578,12 +562,12 @@ impl App {
                 document_language_menu(doc.path.is_some())
             }
             MenuTarget::CommitFile(_) if self.commit_multi_selected() => {
-                let any_exists = self.commit_selection().iter().any(winc_backend::fs::exists);
+                let any_exists = (self.commit_selection().iter()).any(|path| self.may_exist(path));
                 commit_selection_menu(any_exists)
             }
             MenuTarget::CommitFile(path) => {
                 let mut menu = commit_file_menu(
-                    winc_backend::fs::exists(path),
+                    self.may_exist(path),
                     self.relative_path(path).is_some(),
                     &self.ignore_kinds(path),
                 );
@@ -636,10 +620,9 @@ impl App {
                 .filter(|(_, remote)| !remote.starts_with('-'))
                 .map(|(i, _)| MenuEntry::Item(MenuCommand::FormRemote(i), true))
                 .collect(),
-            MenuTarget::LogFile(_, path) => log_file_menu(
-                winc_backend::fs::exists(path),
-                self.relative_path(path).is_some(),
-            ),
+            MenuTarget::LogFile(_, path) => {
+                log_file_menu(self.may_exist(path), self.relative_path(path).is_some())
+            }
             MenuTarget::LogCommit(oid) => {
                 let commit = self.log_commit(oid);
                 let tags: Vec<&str> = (commit.iter().flat_map(|c| &c.refs))
@@ -659,31 +642,7 @@ impl App {
             }
             // 目录菜单不经过这里（`App::open_crumb_menu`）。
             MenuTarget::Folder => return,
-            MenuTarget::Location(_, worktree) => {
-                let missing = worktree
-                    .and_then(|i| self.git.worktrees.get(i))
-                    .is_some_and(|w| w.prunable);
-                let removable = worktree.is_some_and(|i| {
-                    i > 0
-                        && self.git.current_worktree() != Some(i)
-                        && self.git.worktrees.get(i).is_some_and(|w| !w.locked)
-                        && self.git.branch.running.is_none()
-                });
-                let idle = self.git.branch.running.is_none();
-                let mut menu = vec![
-                    MenuEntry::Item(MenuCommand::LocationNewWindow, true),
-                    MenuEntry::Item(MenuCommand::LocationReveal, true),
-                ];
-                if worktree.is_some_and(|i| i > 0) {
-                    menu.push(MenuEntry::Separator);
-                    menu.push(MenuEntry::Item(MenuCommand::LocationRemove, removable));
-                }
-                // 目录已不在：打不开，也没有东西可以移除，只能清理。
-                if missing {
-                    menu = vec![MenuEntry::Item(MenuCommand::LocationPrune, idle)];
-                }
-                menu
-            }
+            MenuTarget::Location(path, worktree) => self.location_row_menu(path, *worktree),
             MenuTarget::BranchOps(index) => crate::app::git::branch::branch_ops(
                 *index,
                 &self.git.branches,
@@ -716,11 +675,13 @@ impl App {
                 | MenuTarget::NamedTheme(_)
                 | MenuTarget::Whitespace
                 | MenuTarget::VimClipboard
+                | MenuTarget::OpenWorktree
                 | MenuTarget::Zoom
                 | MenuTarget::BackgroundImage
                 | MenuTarget::BackgroundFit
                 | MenuTarget::TextWidth
                 | MenuTarget::TerminalPosition
+                | MenuTarget::TerminalTabPosition
                 | MenuTarget::OptionAsMeta
                 | MenuTarget::Font(_)
         );
@@ -729,11 +690,13 @@ impl App {
             MenuTarget::Locale => Some(Setting::Language),
             MenuTarget::Whitespace => Some(Setting::RenderWhitespace),
             MenuTarget::VimClipboard => Some(Setting::VimClipboard),
+            MenuTarget::OpenWorktree => Some(Setting::GitOpenWorktree),
             MenuTarget::Zoom => Some(Setting::Zoom),
             MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
             MenuTarget::BackgroundFit => Some(Setting::BackgroundFit),
             MenuTarget::TextWidth => Some(Setting::TextWidth),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
+            MenuTarget::TerminalTabPosition => Some(Setting::TerminalTabPosition),
             MenuTarget::OptionAsMeta => Some(Setting::TerminalOptionAsMeta),
             MenuTarget::Font(setting) => Some(setting),
             _ => None,
@@ -1323,6 +1286,10 @@ impl App {
                 winc_config::VimClipboard::ALL.get(i)
                     == Some(&self.config.vim_clipboard.unwrap_or_default())
             }
+            MenuCommand::OpenWorktree(i) => {
+                winc_config::WorktreeOpen::ALL.get(i)
+                    == Some(&self.config.git_open_worktree.unwrap_or_default())
+            }
             MenuCommand::DefaultShell(i) => {
                 let configured = self.configured_shell().map(|shell| shell.command);
                 let listed = i.and_then(|i| self.terminal.shells.get(i));
@@ -1332,6 +1299,9 @@ impl App {
                 (self.terminal.shells.iter()).all(|shell| shell.command != configured.command)
             }),
             MenuCommand::TerminalPosition(right) => self.terminal_right() == right,
+            MenuCommand::TerminalTabPosition(right) => {
+                (self.config.terminal_vertical_tabs == Some(true)) == right
+            }
             MenuCommand::Zoom(i) => {
                 crate::app::settings::ZOOM_STEPS.get(i) == Some(&self.config.ui_zoom.unwrap_or(100))
             }

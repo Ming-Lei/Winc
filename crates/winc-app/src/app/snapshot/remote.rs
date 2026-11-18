@@ -342,17 +342,41 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     .unwrap();
     assert_eq!(std::fs::read(back).unwrap(), b"from here");
 
-    // 目录不存在：说明原因，已打开的目录不变。
+    // 目录不存在：连接保留，提示找不到，从仍然存在的最近一级上级目录开始选择别的目录；已打开的
+    // 目录不变。
+    let browsing = |app: &App| match app.overlays.picker.remote.as_ref().map(|list| &list.stage) {
+        Some(crate::app::remote::picker::Stage::Browse { dir, .. }) => Some(dir.clone()),
+        _ => None,
+    };
+    let local = dir.display().to_string();
     app.open_remote_picker();
-    typed(&mut app, "app-remote-open:/winc/no/such/folder");
-    assert_eq!(
-        titles(&app)[0],
-        "连接到 app-remote-open:/winc/no/such/folder"
-    );
+    typed(&mut app, &format!("app-remote-open:{local}/gone/inner"));
     app.picker_accept();
     let notice = app.notice.text.take().unwrap();
-    assert!(notice.starts_with("无法连接 app-remote-open："), "{notice}");
+    assert!(
+        notice.starts_with("未找到「") && notice.contains("/gone/inner"),
+        "{notice}"
+    );
+    assert!(!notice.contains("最近列表"), "{notice}");
+    assert_eq!(browsing(&app), Some(local.clone()));
+    assert!(remote::is_connected(&target));
     assert_eq!(app.editor.root(), Some(root.as_path()));
+    app.close_picker();
+    // 相对于主目录的路径同样给出最近一级上级目录。
+    app.open_remote_picker();
+    typed(&mut app, "app-remote-open:~/winc-no-such-folder/inner");
+    app.picker_accept();
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap();
+    let home = home.canonicalize().unwrap().display().to_string();
+    let notice = app.notice.text.take().unwrap();
+    assert!(
+        notice.contains(&format!("{home}/winc-no-such-folder/inner")),
+        "{notice}"
+    );
+    assert_eq!(browsing(&app), Some(home));
+    app.close_picker();
 
     // 最近列表中远端的目录经同一流程打开，不在界面线程上判断它是否存在；本机的目录不经此处。
     assert!(app.state.recent.contains(&root));
@@ -360,6 +384,24 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert!(app.notice.text.is_none(), "{:?}", app.notice.text);
     assert_eq!(app.editor.root(), Some(root.as_path()));
     assert!(!app.reopen_remote(&dir));
+
+    // 最近列表中的远端目录已被删除：移出最近列表，连接保留，从它的上级目录开始选择。
+    let old = dir.join("old");
+    std::fs::create_dir(&old).unwrap();
+    let old = winc_backend::virtual_path(&target, old.as_os_str().as_bytes());
+    assert!(app.reopen_remote(&old));
+    assert_eq!(app.editor.root(), Some(old.as_path()));
+    assert!(app.reopen_remote(&root));
+    assert!(app.state.recent.contains(&old));
+    std::fs::remove_dir(dir.join("old")).unwrap();
+    assert!(app.reopen_remote(&old));
+    let notice = app.notice.text.take().unwrap();
+    assert!(notice.contains("已从最近列表中移除"), "{notice}");
+    assert!(!app.state.recent.contains(&old));
+    assert_eq!(browsing(&app), Some(local.clone()));
+    assert!(remote::is_connected(&target));
+    assert_eq!(app.editor.root(), Some(root.as_path()));
+    app.close_picker();
 
     // 连接中断（这里由本程序断开来模拟）：窗口重新获得焦点时提示一次，按钮重新连接。
     remote::disconnect(&target);
@@ -479,6 +521,7 @@ fn a_folder_on_a_connected_host_opens_as_the_workspace() {
     assert_eq!(app.state.remote_key("app-remote-open"), None);
     assert_eq!(remote::identity(&target), None);
     app.close_picker();
+    local_only_actions_are_not_offered_on_a_remote_host();
 }
 
 /// 截图：开始页、主机面板、目录面板（浏览与筛选）和打开远端目录后的窗口。
@@ -899,6 +942,25 @@ fn features_work_in_a_remote_workspace() {
     app.copy_path(&root.join("src/main.rs"), true);
     assert_eq!(app.clipboard_text().as_deref(), Some("src/main.rs"));
 
+    // 代码引用同样给出那台主机上的路径：绝对路径不带连接目标，相对路径不变，多行带行号范围。
+    let active = app.editor.active().unwrap().path.clone().unwrap();
+    assert_eq!(active, root.join("src/config.rs"));
+    let remote = dir.join("src/config.rs").to_string_lossy().into_owned();
+    app.select(0, 0);
+    app.copy_reference(true);
+    assert_eq!(app.clipboard_text(), Some(format!("{remote}:1")));
+    app.copy_reference(false);
+    assert_eq!(app.clipboard_text().as_deref(), Some("src/config.rs:1"));
+    let second = app.editor.active().unwrap().text().line_start(1);
+    app.select(0, second + 1);
+    app.copy_reference(true);
+    assert_eq!(app.clipboard_text(), Some(format!("{remote}:1-2")));
+    // 文件不在打开的目录内时，相对的引用退回完整路径，同样是那台主机上的写法。
+    let inside = app.editor.workspace.take();
+    app.copy_reference(false);
+    assert_eq!(app.clipboard_text(), Some(format!("{remote}:1-2")));
+    app.editor.workspace = inside;
+
     // 其他程序修改了已打开的文件：窗口重新获得焦点时重读。
     app.open_path(&root.join("src/config.rs"));
     std::fs::write(dir.join("src/config.rs"), "pub struct Changed;\n").unwrap();
@@ -924,5 +986,90 @@ fn features_work_in_a_remote_workspace() {
     );
 
     remote::disconnect(&target);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 远端工作区不提供只能在本机执行的动作：菜单中不列出，浏览器按钮不出现；从快捷键、命令面板
+/// 执行时说明原因，不显示系统的错误码。由 [`a_folder_on_a_connected_host_opens_as_the_workspace`]
+/// 调用，原因同 [`folders_on_a_remote_host_are_not_taken_for_files`]。
+fn local_only_actions_are_not_offered_on_a_remote_host() {
+    use crate::app::input::context_menu::{MenuCommand, MenuEntry, MenuTarget};
+
+    let dir = search_folder("remote-local-only").canonicalize().unwrap();
+    std::fs::write(dir.join("page.html"), "<p>hi</p>\n").unwrap();
+    let target = loopback("app-remote-local-only");
+    let root = winc_backend::virtual_path(&target, dir.as_os_str().as_bytes());
+    let mut app = blank_app(false);
+    app.config.remote_enabled = Some(true);
+    app.open_folder(&root);
+    let file = root.join("src/main.rs");
+
+    let listed = |app: &mut App, target: MenuTarget| -> Vec<MenuCommand> {
+        app.open_context_menu(target, (10.0, 10.0));
+        let menu = app.overlays.context_menu.take().unwrap();
+        (menu.entries.into_iter())
+            .filter_map(|entry| match entry {
+                MenuEntry::Item(command, _) => Some(command),
+                _ => None,
+            })
+            .collect()
+    };
+    // 终端模块关闭：两项都不列出；开启后「在终端中打开」进入内置终端，照常列出。
+    for terminal in [false, true] {
+        app.config.terminal_enabled = Some(terminal);
+        let tree = listed(&mut app, MenuTarget::Tree(Some(file.clone())));
+        assert!(!tree.contains(&MenuCommand::Reveal), "{tree:?}");
+        assert_eq!(tree.contains(&MenuCommand::OpenInTerminal), terminal);
+        assert!(tree.contains(&MenuCommand::CopyPath) && tree.contains(&MenuCommand::NewFile));
+        let blank = listed(&mut app, MenuTarget::Tree(None));
+        assert!(!blank.contains(&MenuCommand::Reveal), "{blank:?}");
+        assert_eq!(blank.contains(&MenuCommand::OpenInTerminal), terminal);
+    }
+    app.config.terminal_enabled = Some(false);
+    let changed = listed(&mut app, MenuTarget::CommitFile(file.clone()));
+    assert!(!changed.contains(&MenuCommand::Reveal), "{changed:?}");
+    assert!(changed.contains(&MenuCommand::GitOpenFile));
+    let places = app.location_row_menu(&root, None);
+    assert!(!places.contains(&MenuEntry::Item(MenuCommand::LocationReveal, true)));
+    // 本机的文件不受影响。
+    let local = listed(&mut app, MenuTarget::Tree(Some(dir.join("src/main.rs"))));
+    assert!(local.contains(&MenuCommand::Reveal) && local.contains(&MenuCommand::OpenInTerminal));
+    let places = app.location_row_menu(&dir, None);
+    assert!(places.contains(&MenuEntry::Item(MenuCommand::LocationReveal, true)));
+
+    // 快捷键和命令面板仍能到达这些动作：说明原因。
+    app.reveal_in_file_manager(&file);
+    let notice = app.notice.text.take();
+    assert_eq!(
+        notice.as_deref(),
+        Some(winc_i18n::t!("workspace-remote-local-only"))
+    );
+    app.open_in_terminal(Some(&file));
+    let notice = app.notice.text.take();
+    assert_eq!(
+        notice.as_deref(),
+        Some(winc_i18n::t!("workspace-remote-terminal"))
+    );
+
+    // 远端的目录没有运行配置：按钮不显示，命令说明原因，不在本机新建配置文件。
+    app.config.terminal_enabled = Some(true);
+    for action in [Action::RunConfiguration, Action::EditRunConfigurations] {
+        app.run_action(action);
+        let notice = app.notice.text.take();
+        assert_eq!(
+            notice.as_deref(),
+            Some(winc_i18n::t!("terminal-run-remote"))
+        );
+    }
+    assert!(app.run.list.is_empty());
+    assert!(!dir.join(".winc").exists());
+    app.config.terminal_enabled = Some(false);
+
+    // 远端的网页文件没有「在浏览器中打开」；本机的有。
+    app.open_path(&root.join("page.html"));
+    assert!(app.editor.active().is_some_and(|d| d.path.is_some()));
+    assert!(app.browser_page().is_none());
+    app.open_path(&dir.join("page.html"));
+    assert!(app.browser_page().is_some());
     let _ = std::fs::remove_dir_all(&dir);
 }

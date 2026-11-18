@@ -35,6 +35,7 @@ mod status;
 mod table;
 #[cfg(unix)]
 mod terminal;
+mod tiny;
 mod windows;
 mod workspace;
 
@@ -80,6 +81,11 @@ fn sample_folder(name: &str) -> PathBuf {
 
     std::fs::write(dir.join("data.bin"), [1, 0, 2, 3]).unwrap();
     dir
+}
+
+/// 让本测试线程使用 VS Code 方案：测试按的是该方案中的键。
+fn use_vscode_keys() {
+    crate::keymap::install(crate::keymap::Preset::VsCode, &Default::default());
 }
 
 /// 打开 `path`（目录或文件），按给定主题准备好一个画进内存的界面。
@@ -291,8 +297,29 @@ fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
             };
             theme_tile(layout.row(setting).unwrap().control, i)
         }
-        SettingsPart::KeySearch => app.keys_layout().search,
-        SettingsPart::Record => app.keys_layout().record,
+        SettingsPart::KeySearch => app.keys_layout().header.search,
+        SettingsPart::Record => app.keys_layout().header.record,
+        SettingsPart::Keymap => app.keys_layout().header.value,
+        // 取一行左端名称前的空白，右侧的键帽和悬停时的链接不会挡住。
+        SettingsPart::KeyRow(action) => {
+            let keys = app.keys_layout();
+            let row = keys.rows().find(|(_, row)| row.action == action).unwrap().0;
+            Rect::new(
+                row.x,
+                row.y,
+                crate::theme::SETTINGS_INSET,
+                crate::theme::KEYS_ROW,
+            )
+        }
+        // 按钮、链接和 × 的位置在绘制时才确定，调用前需要先绘制一帧。
+        SettingsPart::KeyEdit(_)
+        | SettingsPart::KeyReset(_)
+        | SettingsPart::KeyRemove(_)
+        | SettingsPart::KeySave
+        | SettingsPart::KeyCancel => {
+            let found = app.hits.keys_parts.iter().find(|(_, p)| *p == part);
+            found.expect("先绘制一帧").0
+        }
         // 链接的位置在绘制时才确定，调用前需要先绘制一帧。
         SettingsPart::Install(id) => {
             let links = &app.hits.install_links;

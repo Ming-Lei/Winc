@@ -403,6 +403,7 @@ impl ApplicationHandler<UserEvent> for App {
             // 窗口在光标所在位置被其他窗口遮挡时不响应移动，悬停状态按光标离开处理。
             WindowEvent::CursorMoved { .. } if !self.under_cursor() => self.cursor_left(),
             WindowEvent::CursorMoved { position, .. } => {
+                self.frame.frame_log.pointer_moved();
                 self.pointer.cursor_inside = true;
                 let scale = self
                     .frame
@@ -512,13 +513,18 @@ impl App {
                     self.request_close(request);
                 }
             }
+            UserEvent::CloseConfirmed(ok) => self.close_confirmed(ok),
             UserEvent::GitLogConfirmed(op) => self.run_log_confirmed(op),
             UserEvent::GitRemoveWorktree(path, branch) => self.remove_worktree_now(&path, branch),
             UserEvent::GitOpenWorktree(path, new, remember) => {
                 self.open_worktree_chosen(&path, new, remember);
             }
+            UserEvent::FolderDropAsk(path, into) => self.ask_folder_drop(&path, into),
+            UserEvent::FolderDropped(path, into, add, remember) => {
+                self.folder_drop_chosen(&path, into, add, remember);
+            }
             UserEvent::Indexed => self.picker_indexed(),
-            UserEvent::QuitRequested => self.request_quit(),
+            UserEvent::QuitRequested => self.ask_quit(),
             UserEvent::SaveChoice(choice) => self.answer_save_prompt(choice),
             UserEvent::Overwrite(id, choice) => self.answer_overwrite(id, choice),
             UserEvent::FolderItem(path) => self.open_path(&path),
@@ -657,6 +663,8 @@ impl App {
         earliest(&mut wake, find);
         let mapping = self.vim_tick(now);
         earliest(&mut wake, mapping);
+        let pdf_tools = self.pdf_tools_tick(now);
+        earliest(&mut wake, pdf_tools);
         // 当前标签正在读取且保留上一帧未绘制时，到期仍未读取完成则绘制「正在读取」。
         if self.disk.loads.held {
             match self.holding_frame(now) {
@@ -668,6 +676,7 @@ impl App {
             }
         }
         earliest(&mut wake, self.terminal_settle_tick(now));
+        earliest(&mut wake, self.auto_save_tick(now));
         let copying = self.copy_tick(now);
         earliest(&mut wake, copying);
 
@@ -828,13 +837,14 @@ impl App {
         self.save_session();
     }
 
-    /// 退出前是否需要询问用户：存在退出时不会写入备份的未保存文档（[`App::kept_on_quit`]），
-    /// 或终端中有程序在运行（[`App::terminal_busy`]）。
+    /// 退出前是否需要询问用户：开了关闭前确认，存在退出时不会写入备份的未保存文档
+    /// （[`App::kept_on_quit`]），或终端中有程序在运行（[`App::terminal_busy`]）。
     ///
     /// macOS 上为假时 `⌘Q`、注销和关机直接退出，退出前在 [`App::prepare_exit`] 中写入备份；为真时
     /// 取消本次退出，回到事件循环询问，注销和关机也随之中断。
     pub(crate) fn asks_before_quit(&self) -> bool {
-        self.terminal_busy()
+        self.config.confirm_close == Some(true)
+            || self.terminal_busy()
             || (self.editor.documents.iter()).any(|d| d.is_dirty() && !self.kept_on_quit(d))
     }
 }

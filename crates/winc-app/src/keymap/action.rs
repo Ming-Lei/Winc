@@ -26,6 +26,8 @@ pub enum Action {
     NewWindow,
     OpenFile,
     OpenFolder,
+    /// 把一个目录加为窗口的附加目录。
+    AddFolder,
     RemoteConnect,
     RemoteDisconnect,
     OpenRecent,
@@ -179,6 +181,10 @@ pub enum Action {
     /// 全部显示或不显示空白符。
     ToggleWhitespace,
     TogglePreview,
+    /// 把当前标签设为只读或恢复为可以编辑。
+    ToggleReadOnly,
+    /// 把窗口里的全部标签设为只读或恢复。
+    ToggleReadOnlyAll,
     NextDifference,
     PreviousDifference,
     /// 差异里的下一个文件。
@@ -332,6 +338,7 @@ impl Action {
             NewWindow => t!("cmd-new-window"),
             OpenFile => t!("cmd-open-file"),
             OpenFolder => t!("cmd-open-folder"),
+            AddFolder => t!("cmd-add-folder"),
             RemoteConnect => t!("cmd-remote-connect"),
             RemoteDisconnect => t!("cmd-remote-disconnect"),
             OpenRecent => t!("cmd-open-recent"),
@@ -545,7 +552,23 @@ impl Action {
             PreviousError => t!("cmd-previous-error"),
             SendToTerminal => t!("cmd-send-to-terminal"),
             TogglePreview => t!("cmd-toggle-preview"),
+            ToggleReadOnly => t!("cmd-toggle-read-only"),
+            ToggleReadOnlyAll => t!("cmd-toggle-read-only-all"),
         }
+    }
+
+    /// 返回命令在配置文件中的名字：变体名，首字母小写（如 `quickOpen`）。
+    pub fn id(self) -> String {
+        let name = format!("{self:?}");
+        let mut chars = name.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_ascii_lowercase().to_string() + chars.as_str()
+        })
+    }
+
+    /// 按配置文件中的名字 `id` 返回命令；不认识时返回 `None`。
+    pub fn from_id(id: &str) -> Option<Action> {
+        ACTIONS.iter().copied().find(|action| action.id() == id)
     }
 
     /// 返回命令的英文名；在命令面板中输入英文也能搜到该命令。
@@ -568,6 +591,7 @@ impl Action {
             NewWindow => "New Window",
             OpenFile => "Open",
             OpenFolder => "Open Folder",
+            AddFolder => "Add Folder to Window",
             RemoteConnect => "Remote: Connect to SSH Host…",
             RemoteDisconnect => "Remote: Disconnect",
             OpenRecent => "Open Recent Folder",
@@ -775,6 +799,8 @@ impl Action {
             PreviousError => "Terminal: Previous Error",
             SendToTerminal => "Terminal: Run Selected Text",
             TogglePreview => "Toggle Preview",
+            ToggleReadOnly => "Toggle Read-Only",
+            ToggleReadOnlyAll => "Toggle Read-Only for All Files",
         }
     }
 
@@ -796,12 +822,11 @@ impl Action {
             | RecordKeys
             | InstallShellCommand
             | UninstallShellCommand => Group::General,
-            NewFile | OpenFile | OpenFolder | RemoteConnect | RemoteDisconnect | Save | SaveAs
-            | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab | PreviousTab
-            | CloseFolder | CloseWindow | CopyPath | CopyRelativePath | RevealInFinder
-            | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal | Quit => {
-                Group::File
-            }
+            NewFile | OpenFile | OpenFolder | AddFolder | RemoteConnect | RemoteDisconnect
+            | Save | SaveAs | CloseTab | CloseOtherTabs | CloseAllTabs | ReopenClosed | NextTab
+            | PreviousTab | CloseFolder | CloseWindow | CopyPath | CopyRelativePath
+            | RevealInFinder | CopyActivePath | CopyKeyPath | RevealActiveFile | OpenInTerminal
+            | Quit => Group::File,
             NewWindow | OpenRecent | CopyReference | CopyAbsoluteReference => Group::File,
             Undo
             | Redo
@@ -901,6 +926,8 @@ impl Action {
             | ToggleStatusBar
             | ToggleWhitespace
             | TogglePreview
+            | ToggleReadOnly
+            | ToggleReadOnlyAll
             | NextDifference
             | PreviousDifference
             | NextDiffFile
@@ -1182,6 +1209,7 @@ pub const ACTIONS: &[Action] = {
         NewWindow,
         OpenFile,
         OpenFolder,
+        AddFolder,
         RemoteConnect,
         RemoteDisconnect,
         OpenRecent,
@@ -1300,6 +1328,8 @@ pub const ACTIONS: &[Action] = {
         ToggleStatusBar,
         ToggleWhitespace,
         TogglePreview,
+        ToggleReadOnly,
+        ToggleReadOnlyAll,
         ShowCommit,
         GitShowChanges,
         ChangesShowDiff,

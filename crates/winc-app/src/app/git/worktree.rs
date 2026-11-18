@@ -471,7 +471,12 @@ impl App {
         let name = winc_editor::git::repo_name(&path);
         let message = t!("git-worktree-remove-confirm", name = name.as_str());
         if self.window.handle.is_some() {
-            let mut detail = t!("git-worktree-remove-confirm-detail").to_owned();
+            // 远端主机上没有废纸篓：目录由 `git worktree remove` 直接删除。
+            let mut detail = if winc_backend::is_remote(&path) {
+                t!("git-worktree-remove-confirm-detail-remote").to_owned()
+            } else {
+                t!("git-worktree-remove-confirm-detail").to_owned()
+            };
             // 有没提交的改动、游离的提交时没有默认按钮（↩ 不会误删）。
             let dirty = check.changed + check.untracked + check.unreachable > 0;
             if check.unreachable > 0 {
@@ -542,7 +547,10 @@ impl App {
             self.ask_close_worktree_window(&name, path);
             return;
         }
-        if let Err(e) = (self.trash)(path) {
+        // 远端主机上的目录留给下面的 `git worktree remove --force` 删除。
+        if !winc_backend::is_remote(path)
+            && let Err(e) = (self.trash)(path)
+        {
             let error = e.to_string();
             self.notify(t!("git-worktree-trash-failed", name = &name, error = error));
             return;

@@ -115,8 +115,9 @@ pub fn run() {
 
     // 配置必须在加载字体之前读出，第一帧即使用用户指定的字体和字号。读入配置时的问题按系统语言
     // 描述（语言已在处理参数之前设定），界面语言随后按配置设定。
-    let (config, problems) = Config::load();
+    let (config, mut problems) = Config::load();
     set_locale(config.language.unwrap_or_default().resolve());
+    problems.extend(keymap::install_from(&config));
     for problem in &problems {
         eprintln!("winc: {problem}");
     }

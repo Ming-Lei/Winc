@@ -124,9 +124,9 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     draw_header(app, frame, layout);
 
     // 滚动内容被限制在标题下方的区域内：滚到上方的行不会压在标题上，滚到下方的行不会绘制到
-    // 卡片之外。
+    // 卡片之外。「快捷键」页的搜索框在标题行中，由该页自行裁剪。
     let caret = if layout.page == SettingsPage::Keys && !layout.searching {
-        frame.within(layout.body, |frame| keys::draw(app, frame))
+        keys::draw(app, frame, layout.body)
     } else {
         frame.within(layout.body, |frame| draw_body(app, frame, layout))
     };
@@ -447,6 +447,12 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             } else if row.setting == Setting::RenderWhitespace {
                 let choice = app.config.render_whitespace.unwrap_or_default();
                 (crate::layout::whitespace_label(choice).to_owned(), false)
+            } else if row.setting == Setting::AutoSave {
+                let choice = app.config.auto_save.unwrap_or_default();
+                (crate::layout::auto_save_label(choice).to_owned(), false)
+            } else if row.setting == Setting::DropFolder {
+                let choice = app.config.drop_folder.unwrap_or_default();
+                (crate::layout::drop_folder_label(choice).to_owned(), false)
             } else if row.setting == Setting::GitOpenWorktree {
                 let choice = app.config.git_open_worktree.unwrap_or_default();
                 (crate::layout::open_worktree_label(choice).to_owned(), false)

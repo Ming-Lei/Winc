@@ -189,6 +189,7 @@ git-worktree-switch-to-window = Switch to Window
 git-worktree-close-window-first = Close the window showing worktree “{ $name }” first, then remove the worktree
 git-worktree-remove-confirm = Remove worktree “{ $name }”?
 git-worktree-remove-confirm-detail = The worktree folder will be moved to the { common-trash }, where you can restore it.
+git-worktree-remove-confirm-detail-remote = The worktree folder on the remote host will be deleted and can’t be restored.
 git-worktree-remove-unreachable = { $count ->
     [one] { $count } commit on the detached HEAD doesn’t belong to any branch and can’t be recovered after removal. To keep it, create a branch for it in this worktree first.
    *[other] { $count } commits on the detached HEAD don’t belong to any branch and can’t be recovered after removal. To keep them, create a branch for them in this worktree first.
@@ -412,6 +413,7 @@ git-abort-confirm-button = Abort { $operation }
 git-rollback-confirm-one = Roll back changes to “{ $name }”?
 git-rollback-confirm-many = Roll back changes to { $count } files?
 git-rollback-confirm-detail = Tracked files are restored to the last commit, and untracked files are moved to the { common-trash }.
+git-rollback-confirm-detail-remote = Tracked files are restored to the last commit, and untracked files are deleted and can’t be restored.
 git-rollback-confirm-button = Roll Back
 git-rollback-file-failed = Couldn’t roll back “{ $name }”: { $error }
 git-rollback-done = { $count ->

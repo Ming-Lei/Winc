@@ -54,7 +54,7 @@ pub(crate) use input::context_menu::{
 };
 pub use input::context_menu::{ContextMenu, MenuButton, MenuCommand};
 pub use input::palette::palette;
-pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts};
+pub(crate) use lifecycle::alert::{AlertButton, AlertKey, AlertPart, AlertParts, InAppAlert};
 use lifecycle::appearance::{forced_theme, unusable_font};
 pub(crate) use lifecycle::backup::{restore_at_launch, restore_tabs};
 pub use lifecycle::closing::{CloseRequest, SaveChoice, SavePrompt};
@@ -64,6 +64,7 @@ pub(crate) use lifecycle::title_bar::resize_cursor;
 pub(crate) use lifecycle::wallpaper::Layer as WallpaperLayer;
 use lifecycle::window::frame_interval;
 pub(crate) use scroll::ScrollTarget;
+pub(crate) use settings::shortcuts::KeyEdit;
 pub use settings::{DialogCache, SettingsState};
 pub(crate) use status::language_picker::LanguageRow;
 pub use status::motion::{StatusEntry, StatusKey, StatusMotion, StatusRow};
@@ -78,7 +79,7 @@ pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
-pub(crate) use workspace::recent::{Parent, folder_label, parents};
+pub(crate) use workspace::recent::{Parent, parents};
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
 pub use workspace::tool_fold::ToolFold;
@@ -309,6 +310,8 @@ pub enum UserEvent {
     TerminalShells(Vec<terminal::shells::ShellChoice>),
     /// 退出或关闭窗口前的确认结果（终端中有程序在运行）：用户确认时为真，取消时为假。
     TerminalQuit(bool),
+    /// 关闭前确认（`confirm_close`）的结果：用户确认时为真，取消时为假。
+    CloseConfirmed(bool),
     /// 确认框中确认把文字粘贴到指定的终端标签（多行文字，且程序未开启括号粘贴）。
     TerminalPaste(u16, String),
     /// 确认框中确认日志中对一个提交的操作（签出该提交、硬重置）。
@@ -317,6 +320,11 @@ pub enum UserEvent {
     GitRemoveWorktree(PathBuf, Option<String>),
     /// 提示框中选定了打开工作树的方式：目录、是否在新窗口、是否记住。
     GitOpenWorktree(PathBuf, bool, bool),
+    /// 拖放结束后询问拖入的目录怎样处理：目录，以及落在文件树上时的目标目录。
+    FolderDropAsk(PathBuf, Option<PathBuf>),
+    /// 对拖入目录的询问的答复：目录、文件树上的目标目录、是否加为附加目录（否则按落点处理）、
+    /// 是否记住这个选择。
+    FolderDropped(PathBuf, Option<PathBuf>, bool, bool),
     /// 后台已计算完一个文档的逐行追溯。
     GitBlame,
     /// 后台已检查或重读被其他程序修改的文件。
@@ -887,6 +895,10 @@ pub struct App {
     pub(crate) history: workspace::History,
     /// 两段组合键（如 `⌘K ⌘S`）的第一段，正在等待第二段。
     pub(crate) pending_chord: Option<crate::keymap::Stroke>,
+    /// 单按修饰键的状态，用于连按两下修饰键的快捷键。
+    pub(crate) taps: input::tap::Taps,
+    /// 「首次设置」中快捷键一页的状态。
+    pub(crate) setup: setup::SetupKeys,
 
     /// 设置浮层：当前页、分类和各输入框。
     pub settings: SettingsState,
@@ -911,6 +923,8 @@ pub struct App {
     // 状态栏消息和悬停提示
     /// 文件已从磁盘删除、自动保存因此未写入且已提示过用户的文档；失去焦点时不再重复提示。
     deleted_told: HashSet<DocumentId>,
+    /// 自动保存的时机：焦点是否离开编辑区，停止输入后何时保存。
+    auto_save_watch: workspace::files::AutoSaveWatch,
     /// 右上角提示条的状态。
     pub notice: lifecycle::notice::Notice,
 
@@ -1080,7 +1094,12 @@ impl App {
 
         // 鼠标进入标题指示条时开始计时，满 `TOC_HOVER_DELAY` 后由 `tick` 展开标题列表；
         // 在指示条与列表之间移动不重新计时。
-        let toc = |h: Hover| matches!(h, Hover::MarkdownToc(_));
+        let toc = |h: Hover| {
+            matches!(
+                h,
+                Hover::MarkdownToc(_) | Hover::Scrollbar(Scrollbar::MarkdownToc)
+            )
+        };
         if toc(hover) != toc(self.pointer.hover) {
             // 鼠标离开时收起已展开的列表。
             if self.preview.markdown.toc_shown {

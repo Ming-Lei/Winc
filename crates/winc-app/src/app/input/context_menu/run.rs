@@ -140,6 +140,10 @@ impl App {
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
                 MenuCommand::NewWindow => self.new_window(None),
                 MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
+                MenuCommand::AddFolder => self.ask_add_folder(),
+                MenuCommand::RenameGroup => self.ask_rename_group(),
+                MenuCommand::OpenGroup(i) => self.open_group(i),
+                MenuCommand::GroupFolder(i, j) => self.open_group_folder(i, j),
                 MenuCommand::OpenWslFolder(i) => {
                     if let Some(distro) = crate::system::wsl_distributions().get(i) {
                         self.pick(Pick::WslFolder(distro.clone()));
@@ -188,6 +192,20 @@ impl App {
                     && let Some(&choice) = winc_config::RenderWhitespace::ALL.get(i)
                 {
                     self.set_render_whitespace(choice);
+                }
+            }
+            MenuTarget::DropFolder => {
+                if let MenuCommand::DropFolder(i) = command
+                    && let Some(&choice) = winc_config::FolderDrop::ALL.get(i)
+                {
+                    self.set_drop_folder(choice);
+                }
+            }
+            MenuTarget::AutoSave => {
+                if let MenuCommand::AutoSave(i) = command
+                    && let Some(&choice) = winc_config::AutoSave::ALL.get(i)
+                {
+                    self.set_auto_save(choice);
                 }
             }
             MenuTarget::OpenWorktree => {
@@ -283,9 +301,23 @@ impl App {
                 MenuCommand::ToolRemove => self.settings_commit_script(id, None),
                 _ => {}
             },
+            MenuTarget::Keymap => match command {
+                MenuCommand::KeymapPreset(preset) => self.set_keymap_preset(preset),
+                MenuCommand::ImportKeymap(i) => self.import_keymap(i),
+                MenuCommand::ResetAllShortcuts => self.reset_all_shortcuts(),
+                _ => {}
+            },
+            MenuTarget::Shortcut(action) => match command {
+                MenuCommand::ShortcutChange => self.start_key_edit(action, false),
+                MenuCommand::ShortcutAdd => self.start_key_edit(action, true),
+                MenuCommand::ShortcutRemove => self.remove_shortcuts(action),
+                MenuCommand::ShortcutReset => self.reset_shortcuts(action),
+                _ => {}
+            },
             MenuTarget::Indent(id)
             | MenuTarget::LineEnding(id)
             | MenuTarget::Encoding(id)
+            | MenuTarget::ReadOnly(id)
             | MenuTarget::Language(id) => self.run_status_command(command, id),
             MenuTarget::BranchOps(_) => {
                 if let MenuCommand::GitBranch(op, i) = command
@@ -408,6 +440,8 @@ impl App {
                 // 右键时已选中了那一行（空白处则取消选中），新建的位置由选中的行决定。
                 self.start_new_entry(command == MenuCommand::NewFolder);
             }
+            MenuCommand::AddFolder => self.ask_add_folder(),
+            MenuCommand::RemoveFolder => self.remove_folder(&target),
             MenuCommand::Reveal => self.reveal_in_file_manager(&target),
             MenuCommand::OpenInTerminal => self.open_in_terminal(Some(&target)),
             MenuCommand::FindInFolder => self.find_in_folder(&target),
@@ -523,6 +557,7 @@ impl App {
                 }
             }
             MenuCommand::Close => self.close_tab(index),
+            MenuCommand::ReadOnly(on) => self.set_read_only(id, on),
             MenuCommand::CloseOthers => {
                 let ids = docs.iter().filter(|d| d.id != id).map(|d| d.id).collect();
                 self.close_tabs(ids);
@@ -617,9 +652,11 @@ impl App {
         })
     }
 
-    /// 返回 `path` 相对于已打开目录的路径；不在目录内或就是目录本身时返回 `None`。
+    /// 返回 `path` 相对于它所在的目录（打开的目录或附加的目录）的路径；不在这些目录内或就是
+    /// 目录本身时返回 `None`。
     pub(in crate::app) fn relative_path(&self, path: &Path) -> Option<String> {
-        let relative = winc_backend::relative_lossy(path, self.editor.root()?)?;
+        let folder = self.editor.workspace.as_ref()?.folder_of(path)?;
+        let relative = winc_backend::relative_lossy(path, folder)?;
         (!relative.is_empty()).then_some(relative)
     }
 
@@ -674,7 +711,7 @@ impl App {
         let path = (!absolute)
             .then(|| self.relative_path(&path))
             .flatten()
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            .unwrap_or_else(|| path_to_copy(&path));
         let reference = if last > first {
             format!("{path}:{}-{}", first + 1, last + 1)
         } else {
@@ -712,6 +749,10 @@ impl App {
         let Some(ws) = &mut self.editor.workspace else {
             return;
         };
+        // 目录自己的一行不能改名。
+        if ws.is_folder_row(path) {
+            return;
+        }
         let Some(index) = ws.row_of(path) else {
             return;
         };
@@ -761,7 +802,7 @@ impl App {
             self.wait_for_saves();
         }
 
-        let Some(root) = self.editor.root().map(Path::to_path_buf) else {
+        let Some(root) = self.folder_root(&path) else {
             return;
         };
         let (from, name) = (path.clone(), input);
@@ -809,19 +850,19 @@ impl App {
 
     /// 一次删除 `paths` 里的各项（文件树里多选时）。
     ///
-    /// 根目录和目录以外的路径不删；一项都不剩时什么也不做。
+    /// 打开的目录、附加的目录本身和它们以外的路径不删；一项都不剩时什么也不做。
     pub(in crate::app) fn ask_delete_all(&mut self, mut paths: Vec<PathBuf>) {
-        let Some(root) = self.editor.root() else {
+        let Some(workspace) = &self.editor.workspace else {
             return;
         };
-        paths.retain(|path| path != root && path.starts_with(root));
+        paths.retain(|path| (workspace.folder_of(path)).is_some_and(|folder| folder != path));
         if paths.is_empty() {
             return;
         }
 
         if self.window.handle.is_some() {
             // 远端主机上和 WSL 发行版中的文件不经过废纸篓，直接删除：确认时说明无法恢复。
-            let permanent = crate::system::has_no_trash(root, cfg!(windows));
+            let permanent = crate::system::has_no_trash(&paths[0], cfg!(windows));
             let message = match paths.as_slice() {
                 [path] => {
                     let name = winc_editor::display_name(path);

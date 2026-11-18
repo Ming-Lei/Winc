@@ -117,6 +117,7 @@ impl App {
             NewWindow => self.new_window(None),
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
+            AddFolder => self.ask_add_folder(),
             RemoteConnect => self.open_remote_picker(),
             RemoteDisconnect => self.remote_disconnect(),
             OpenRecent => self.open_recent_folders(),
@@ -166,7 +167,7 @@ impl App {
                     None => self.flash(winc_i18n::t!("cmd-no-file-for-tab")),
                 }
             }
-            Quit => self.request_quit(),
+            Quit => self.ask_quit(),
 
             Undo | Redo | Cut | Copy | Paste if vim_keys.is_some() => {
                 self.vim_feed(vim_keys.unwrap_or_default());
@@ -362,6 +363,8 @@ impl App {
             ToggleStickyScroll => self.settings_toggle(crate::layout::Setting::StickyScroll),
             ToggleVimMode => self.settings_toggle(crate::layout::Setting::VimMode),
             TogglePreview => self.toggle_preview(),
+            ToggleReadOnly => self.toggle_read_only(),
+            ToggleReadOnlyAll => self.set_read_only_all(!self.editor.all_locked()),
             ToggleWordWrap => self.settings_toggle(crate::layout::Setting::WordWrap),
             ToggleLineNumbers => self.settings_toggle(crate::layout::Setting::LineNumbers),
             ToggleStatusBar => self.settings_toggle(crate::layout::Setting::StatusBar),

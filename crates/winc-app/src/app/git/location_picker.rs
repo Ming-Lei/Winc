@@ -618,10 +618,11 @@ impl App {
         if tree.is_some_and(|w| w.prunable) {
             return vec![MenuEntry::Item(MenuCommand::LocationPrune, idle)];
         }
-        let mut menu = vec![
-            MenuEntry::Item(MenuCommand::LocationNewWindow, true),
-            MenuEntry::Item(MenuCommand::LocationReveal, true),
-        ];
+        let mut menu = vec![MenuEntry::Item(MenuCommand::LocationNewWindow, true)];
+        // 远端主机上的目录无法在本机的文件管理器中显示。
+        if !winc_backend::is_remote(path) {
+            menu.push(MenuEntry::Item(MenuCommand::LocationReveal, true));
+        }
         // 只有工作树可以在此窗口中打开；当前所在的工作树该项不可用。
         if tree.is_some() {
             let here = self.git.root.as_deref() == Some(path);

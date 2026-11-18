@@ -2,6 +2,26 @@
 
 use super::*;
 
+/// `editor.autoSave` 读三个取值，也读早先版本的开关。
+#[test]
+fn auto_save_reads_its_values_and_the_old_switch() {
+    for (value, expected) in [
+        (r#""off""#, AutoSave::Off),
+        (r#""onFocusChange""#, AutoSave::OnFocusChange),
+        (r#""afterDelay""#, AutoSave::AfterDelay),
+        ("true", AutoSave::OnFocusChange),
+        ("false", AutoSave::Off),
+    ] {
+        let (config, problems) = Config::parse(&format!(r#"{{"editor":{{"autoSave":{value}}}}}"#));
+        assert!(problems.is_empty(), "{value}");
+        assert_eq!(config.auto_save, Some(expected));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"editor":{"autoSave":"always"}}"#);
+    assert_eq!(config.auto_save, None);
+    assert!(!problems.is_empty());
+}
+
 #[test]
 fn terminal_application_priority_is_optional_and_round_trips() {
     assert_eq!(Config::default().terminal_application_priority, None);
@@ -257,8 +277,9 @@ fn round_trips_through_json() {
         ui_background_opacity: Some(20.0),
         ui_background_fit: Some(BackgroundFit::Tile),
         tab_width: Some(8),
-        auto_save: Some(true),
+        auto_save: Some(AutoSave::AfterDelay),
         hot_exit: Some(false),
+        confirm_close: Some(true),
         restore_folder: Some(false),
         open_folder_in_new_window: Some(true),
         sticky_scroll: Some(false),
@@ -315,6 +336,7 @@ fn round_trips_through_json() {
         terminal_application_priority: Some(true),
         git_enabled: Some(true),
         git_confirm_push: Some(false),
+        drop_folder: Some(FolderDrop::Add),
         git_remember_credentials: Some(false),
         git_system_proxy: Some(false),
         git_inline_blame: Some(false),
@@ -325,6 +347,12 @@ fn round_trips_through_json() {
         git_open_worktree: Some(WorktreeOpen::NewWindow),
         git_path: Some("C:\\Tools\\wslgit.exe".to_string()),
         remote_enabled: Some(true),
+        keymap: Some("vscode".to_owned()),
+        shortcuts: [
+            ("quickOpen".to_owned(), vec!["cmd+p".to_owned()]),
+            ("format".to_owned(), Vec::new()),
+        ]
+        .into(),
         git_worktree_copy: vec![".env*".to_string(), "config/local.toml".to_string()],
         format_on_save: Some(false),
         format_on_save_exclude: vec!["markdown".to_string(), "yaml".to_string()],

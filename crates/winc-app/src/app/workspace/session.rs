@@ -27,7 +27,13 @@ pub enum StartAction {
     Theme,
     /// 「首次设置」：开启或关闭一个可选模块。
     Module(crate::keymap::Module),
-    /// 「首次设置」底部的「完成」：结束首次设置。
+    /// 「首次设置」第一页底部的「继续」：进入快捷键一页。
+    SetupNext,
+    /// 「首次设置」快捷键一页底部的「返回」。
+    SetupBack,
+    /// 「首次设置」快捷键一页中的一项，参数见 `SetupKeys::choice`。
+    SetupKeymap(usize),
+    /// 「首次设置」快捷键一页底部的「完成」：结束首次设置。
     FinishSetup,
 }
 
@@ -155,6 +161,13 @@ impl App {
             return;
         };
         let session = self.state.session_for(&root).cloned();
+        // 单独打开一组中的打开的目录时不恢复附加的目录，这一组仍记在会话里。
+        let alone = self.disk.open_alone.take().is_some_and(|path| path == root);
+        self.disk.solo = alone && session.as_ref().is_some_and(|s| !s.folders.is_empty());
+        if !self.disk.solo {
+            self.restore_group(session.as_ref());
+        }
+        self.watch_extra_folders();
         let restored = restore_tabs(
             &mut self.editor,
             session.as_ref(),
@@ -336,7 +349,21 @@ impl App {
 
         let terminal = self.terminal_session();
         let run = self.run.selected.clone();
+        let mut folders = self.extra_folders();
+        let mut name = (self.editor.workspace.as_ref())
+            .and_then(|workspace| workspace.alias().map(str::to_owned));
+        // 单独打开着一组中的打开的目录：这一组保持原样。
+        if self.disk.solo
+            && folders.is_empty()
+            && let Some(session) = self.state.session_for(&folder)
+        {
+            folders = session.folders.clone();
+            name = session.name.clone();
+        }
         let sidebar_hidden = !self.panels.sidebar.visible;
+        let locked = (self.editor.documents.iter()).filter(|doc| doc.is_locked());
+        let readonly = locked.filter_map(|doc| doc.path.clone()).collect();
+        let readonly_all = self.editor.all_locked();
         let bookmarks = self
             .editor
             .all_bookmarks()
@@ -359,13 +386,17 @@ impl App {
                 book_places,
                 terminal,
                 run,
+                folders,
+                name,
+                readonly,
+                readonly_all,
                 sidebar_hidden,
             });
         });
     }
 
     /// 最近列表中的目录已不存在（删除、移动，或者外接磁盘未挂载）：从列表中移除并提示。
-    fn forget_missing_recent(&mut self, folder: &Path) {
+    pub(in crate::app) fn forget_missing_recent(&mut self, folder: &Path) {
         self.update_state(|state| state.forget(folder));
         self.notify(winc_i18n::t!(
             "workspace-recent-missing",
@@ -453,6 +484,9 @@ impl App {
                 self.open_context_menu(target, (control.right(), y));
             }
             StartAction::Appearance(choice) => self.set_theme_choice(choice),
+            StartAction::SetupNext => self.setup_next(),
+            StartAction::SetupBack => self.setup_back(),
+            StartAction::SetupKeymap(choice) => self.setup_choose(choice),
             StartAction::FinishSetup => self.finish_setup(),
             StartAction::Module(module) => {
                 use crate::keymap::Module;

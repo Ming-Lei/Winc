@@ -19,6 +19,10 @@ menu-tab-size = Tab Size
 ## Editor and file menus
 
 menu-table = Table
+menu-image-size = Image Size
+menu-image-original-size = Original Size
+menu-paste-plain = Paste as Plain Text
+menu-open-image = Open Image in New Tab
 menu-open-recent-in-new-window = Open “{ $name }” in New Window
 menu-copied-path = Copied path
 menu-copied-relative-path = Copied relative path
@@ -83,6 +87,7 @@ menu-close-tabs-right = Close Tabs to the Right
 menu-close-tabs-left = Close Tabs to the Left
 menu-close-saved-tabs = Close Saved Tabs
 menu-compare-selected = Compare Selected Files
+menu-download = Download…
 menu-reveal-in-tree = Reveal in File Tree
 menu-tree-collapse-all = Collapse All Folders
 menu-tree-locate = Reveal Active File
@@ -208,3 +213,6 @@ menu-shortcut-add = Add Shortcut…
 menu-shortcut-remove = Remove Shortcut
 menu-shortcuts-reset-all = Reset All Shortcuts to Default
 menu-shortcut-reset = Reset to Default
+
+menu-hex-copy-text = Copy as Text
+menu-hex-go-to = Go to Offset…

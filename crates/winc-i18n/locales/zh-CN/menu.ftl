@@ -19,6 +19,10 @@ menu-tab-size = 制表符长度
 ## 编辑区与文件菜单
 
 menu-table = 表格
+menu-image-size = 图片大小
+menu-image-original-size = 原始大小
+menu-paste-plain = 粘贴为纯文本
+menu-open-image = 在新标签中打开图片
 menu-open-recent-in-new-window = 在新窗口中打开「{ $name }」
 menu-copied-path = 已复制路径
 menu-copied-relative-path = 已复制相对路径
@@ -77,6 +81,7 @@ menu-close-tabs-right = 关闭右侧标签页
 menu-close-tabs-left = 关闭左侧标签页
 menu-close-saved-tabs = 关闭已保存的标签页
 menu-compare-selected = 比较所选文件
+menu-download = 下载…
 menu-reveal-in-tree = 在文件树中显示
 menu-tree-collapse-all = 折叠所有目录
 menu-tree-locate = 定位当前文件
@@ -202,3 +207,6 @@ menu-shortcut-add = 添加快捷键…
 menu-shortcut-remove = 移除快捷键
 menu-shortcuts-reset-all = 恢复全部默认快捷键
 menu-shortcut-reset = 恢复默认
+
+menu-hex-copy-text = 按文字复制
+menu-hex-go-to = 转到偏移…

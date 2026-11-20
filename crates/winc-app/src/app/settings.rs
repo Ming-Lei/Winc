@@ -4,6 +4,7 @@
 //! 再写回 [`winc_config::Config`]。关闭浮层时先离开输入框。
 
 mod adopt;
+mod card;
 mod formatters;
 mod scripts;
 pub(super) mod shortcuts;
@@ -86,17 +87,14 @@ pub struct SettingsState {
     pub switch_slide: Option<(Setting, super::animation::Clock)>,
     /// 出现、消失动画用的快照，动画开头画一次存下来，动画结束就释放。
     pub cache: Option<DialogCache>,
-    /// 设置页滚动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
+    /// 设置页滚动或拖动期间保存的窗口画面（含遮罩），用于代替逐帧重绘浮层下方的界面。
     pub scroll_base: Option<winc_render::Snapshot>,
-    /// 最近一次滚动的时刻；未在滚动时为 `None`。
+    /// 最近一次滚动或拖动的时刻；两者都未进行时为 `None`。
     pub scrolled_at: Option<Instant>,
+    /// 卡片相对窗口中央的偏移（逻辑像素），拖动标题行时改变；窗口存在期间保留，再次打开时
+    /// 卡片仍在原处。
+    pub offset: (f32, f32),
 }
-
-/// 停止滚动后保留快照的时长（毫秒）。
-///
-/// 取值约为 60 Hz 下 9 帧的间隔，滚动事件短暂间断时不必重新保存快照。这段时间内浮层下方的变化在
-/// 释放快照后统一绘制。
-const SCROLL_BASE_KEEP: Duration = Duration::from_millis(150);
 
 /// 设置浮层出现、消失的动画用的两张快照：动画开头画一次，途中每帧直接拿来用。
 #[derive(Debug)]
@@ -250,6 +248,9 @@ impl App {
 
         self.settings_cancel_field();
         self.cancel_key_edit();
+        if self.settings_dragging() {
+            self.pointer.drag = Drag::None;
+        }
         self.settings.open = false;
         self.settings.motion = self
             .clock(super::animation::DIALOG_OUT)
@@ -392,6 +393,7 @@ impl App {
             git: self.motion.module_fx.git.share(self.git_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
             scroll: self.settings.scroll,
+            offset: self.settings.offset,
         };
         SettingsLayout::compute(self.layout.window, &view, measure)
     }
@@ -629,26 +631,6 @@ impl App {
         }
     }
 
-    /// 当前帧是否可以使用保存的快照：设置页正在滚动，且快照与窗口的尺寸、缩放比例相同。
-    pub(crate) fn settings_reuses_base(&self, bounds: Rect, scale: f32) -> bool {
-        self.settings.open
-            && self.settings.motion.is_none()
-            && self.settings.scrolled_at.is_some()
-            && (self.settings.scroll_base.as_ref()).is_some_and(|b| b.covers(bounds, scale))
-    }
-
-    /// 滚动结束后释放快照并请求重绘，显示滚动期间浮层下方的变化；返回下一次唤醒的时刻。
-    pub(crate) fn settings_scroll_tick(&mut self, now: Instant) -> Option<Instant> {
-        let due = self.settings.scrolled_at? + SCROLL_BASE_KEEP;
-        if now < due {
-            return Some(due);
-        }
-        self.settings.scrolled_at = None;
-        self.settings.scroll_base = None;
-        self.request_redraw();
-        None
-    }
-
     /// 处理 `←` `→`（`forward` 为 `true` 时为 `→`）：数值减一或加一，主题在缩略图之间移动一张。
     pub(super) fn settings_step(&mut self, forward: bool) {
         let setting = self.settings.selected;
@@ -771,16 +753,23 @@ impl App {
             Setting::StatusBar => self.config.status_bar != Some(false),
             Setting::RestoreWindow => self.config.restore_window != Some(false),
             Setting::Animations => self.animations_on(),
+            Setting::SmoothScrolling => self.smooth_scrolling(),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
             Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers != Some(false),
+            Setting::MarkdownShortcuts => self.config.markdown_shortcuts != Some(false),
+            Setting::MarkdownFocus => self.config.markdown_focus == Some(true),
+            Setting::MarkdownTypewriter => self.config.markdown_typewriter == Some(true),
+            Setting::MarkdownSelectionToolbar => {
+                self.config.markdown_selection_toolbar != Some(false)
+            }
             Setting::CheckUpdates => self.config.update_auto_check != Some(false),
             Setting::SystemTitleBar => self.config.ui_native_title_bar == Some(true),
             Setting::GitModule => self.git_enabled(),
             Setting::GitConfirmPush => self.config.git_confirm_push != Some(false),
             Setting::GitRememberCredentials => self.config.git_remember_credentials != Some(false),
-            Setting::GitSystemProxy => self.config.git_system_proxy != Some(false),
+            Setting::SystemProxy => self.config.system_proxy != Some(false),
             Setting::GitInlineBlame => self.config.git_inline_blame != Some(false),
             Setting::GitAutoFetch => self.config.git_auto_fetch == Some(true),
             Setting::GitTree => !self.git.commit.flat(),
@@ -836,10 +825,15 @@ impl App {
             Setting::StatusBar => self.config.status_bar = Some(on),
             Setting::RestoreWindow => self.config.restore_window = Some(on),
             Setting::Animations => self.config.ui_animations = Some(on),
+            Setting::SmoothScrolling => self.config.smooth_scrolling = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
             Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
             Setting::MarkdownLineNumbers => self.config.markdown_line_numbers = Some(on),
+            Setting::MarkdownShortcuts => self.config.markdown_shortcuts = Some(on),
+            Setting::MarkdownFocus => self.config.markdown_focus = Some(on),
+            Setting::MarkdownTypewriter => self.config.markdown_typewriter = Some(on),
+            Setting::MarkdownSelectionToolbar => self.config.markdown_selection_toolbar = Some(on),
             Setting::CheckUpdates => self.config.update_auto_check = Some(on),
             Setting::SystemTitleBar => self.config.ui_native_title_bar = Some(on),
             Setting::GitModule => self.config.git_enabled = Some(on),
@@ -852,9 +846,9 @@ impl App {
             }
             Setting::GitTree if on == self.git.commit.flat() => self.toggle_commit_layout(),
             Setting::GitTree => {}
-            Setting::GitSystemProxy => {
-                self.config.git_system_proxy = Some(on);
-                winc_editor::git::follow_system_proxy(on);
+            Setting::SystemProxy => {
+                self.config.system_proxy = Some(on);
+                winc_editor::proxy::follow_system_proxy(on);
             }
             Setting::GitStagingArea => self.config.git_staging_area = Some(on),
             Setting::GitInlineBlame => self.config.git_inline_blame = Some(on),
@@ -1467,18 +1461,24 @@ impl App {
             Ok(saved) => {
                 if let Some(backup) = saved.backup {
                     let path = backup.path.display().to_string();
-                    self.notify(if backup.comments {
-                        t!("settings-config-comments-backed-up", path = path)
-                    } else {
-                        t!("settings-config-backed-up", path = path)
-                    });
+                    self.notify(
+                        NoticeKind::Warning,
+                        if backup.comments {
+                            t!("settings-config-comments-backed-up", path = path)
+                        } else {
+                            t!("settings-config-backed-up", path = path)
+                        },
+                    );
                 }
                 self.store.saved_config = saved.config.clone();
                 if saved.config != self.config {
                     self.adopt_config(saved.config);
                 }
             }
-            Err(e) => self.notify(t!("settings-config-write-failed", error = e.to_string())),
+            Err(e) => self.notify(
+                NoticeKind::Error,
+                t!("settings-config-write-failed", error = e.to_string()),
+            ),
         }
     }
 }

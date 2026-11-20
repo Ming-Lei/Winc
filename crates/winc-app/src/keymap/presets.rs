@@ -177,6 +177,49 @@ pub(super) const COMMON: &[PresetRow] = &[
     ),
     row(ClearTerminal, Terminal, &["cmd+k"], &["ctrl+shift+k"]),
     row(Paste, Terminal, &[], &["ctrl+shift+v"]),
+    // Markdown 的写作命令：两套方案都按专门的 Markdown 编辑器的默认键。
+    row(MarkdownHeading1, Markdown, &["cmd+1"], &["ctrl+1"]),
+    row(MarkdownHeading2, Markdown, &["cmd+2"], &["ctrl+2"]),
+    row(MarkdownHeading3, Markdown, &["cmd+3"], &["ctrl+3"]),
+    row(MarkdownHeading4, Markdown, &["cmd+4"], &["ctrl+4"]),
+    row(MarkdownHeading5, Markdown, &["cmd+5"], &["ctrl+5"]),
+    row(MarkdownHeading6, Markdown, &["cmd+6"], &["ctrl+6"]),
+    row(MarkdownParagraph, Markdown, &["cmd+0"], &["ctrl+0"]),
+    row(MarkdownTable, Markdown, &["alt+cmd+t"], &["ctrl+t"]),
+    row(
+        MarkdownCodeBlock,
+        Markdown,
+        &["alt+cmd+c"],
+        &["ctrl+shift+k"],
+    ),
+    row(
+        MarkdownMathBlock,
+        Markdown,
+        &["alt+cmd+b"],
+        &["ctrl+shift+m"],
+    ),
+    row(MarkdownQuote, Markdown, &["alt+cmd+q"], &["ctrl+shift+q"]),
+    row(
+        MarkdownOrderedList,
+        Markdown,
+        &["alt+cmd+o"],
+        &["ctrl+shift+["],
+    ),
+    row(
+        MarkdownBulletList,
+        Markdown,
+        &["alt+cmd+u"],
+        &["ctrl+shift+]"],
+    ),
+    row(MarkdownImage, Markdown, &["ctrl+cmd+i"], &["ctrl+shift+i"]),
+    row(MarkdownFocusMode, Markdown, &["f8"], &["f8"]),
+    row(MarkdownTypewriterMode, Markdown, &["f9"], &["f9"]),
+    row(
+        MarkdownPastePlain,
+        Markdown,
+        &["alt+shift+cmd+v"],
+        &["ctrl+alt+shift+v"],
+    ),
 ];
 
 /// 共用的键在 Linux 上与 Windows 不同的部分。
@@ -184,6 +227,7 @@ pub(super) const COMMON_LINUX: &[PresetRow] = &[];
 
 /// IDEA 方案。
 pub(super) const IDEA: &[PresetRow] = &[
+    row(MarkdownLink, Markdown, &["cmd+k"], &["ctrl+k"]),
     row(MarkdownBold, Markdown, &["cmd+b"], &["ctrl+b"]),
     row(MarkdownItalic, Markdown, &["cmd+i"], &["ctrl+i"]),
     row(MarkdownCode, Markdown, &["shift+cmd+c"], &["ctrl+shift+c"]),
@@ -200,6 +244,8 @@ pub(super) const IDEA: &[PresetRow] = &[
         &["delete", "backspace", "cmd+backspace"],
         &["delete"],
     ),
+    // 与系统的文件管理器相同；其他系统上的 Shift+Delete 在 IDEA 中是剪切，不绑定。
+    row(DeleteFilePermanently, Tree, &["alt+cmd+backspace"], &[]),
     row(
         OpenSelected,
         Tree,
@@ -412,10 +458,19 @@ pub(super) const IDEA_LINUX: &[PresetRow] = &[
 
 /// VS Code 方案。
 pub(super) const VSCODE: &[PresetRow] = &[
+    // ⌘K 是组合键的前缀，插入链接使用 ⌥⌘K。
+    row(MarkdownLink, Markdown, &["alt+cmd+k"], &["ctrl+alt+k"]),
     row(NextError, Terminal, &["f8"], &["f8"]),
     row(PreviousError, Terminal, &["shift+f8"], &["shift+f8"]),
     row(RenameFile, Tree, &["enter"], &["f2"]),
     row(DeleteFile, Tree, &["cmd+backspace", "delete"], &["delete"]),
+    // 与系统的文件管理器相同。
+    row(
+        DeleteFilePermanently,
+        Tree,
+        &["alt+cmd+backspace"],
+        &["shift+delete"],
+    ),
     row(OpenSelected, Tree, &["cmd+down"], &["enter"]),
     row(FindInFolder, Tree, &["shift+alt+f"], &["shift+alt+f"]),
     row(FindNext, EditorOrFind, &["cmd+g", "f3"], &["f3"]),
@@ -596,6 +651,33 @@ pub(super) const VSCODE: &[PresetRow] = &[
     row(CloseWindow, Global, &["shift+cmd+w"], &["ctrl+shift+w"]),
     row(CloseOtherTabs, Global, &["alt+cmd+t"], &[]),
     row(CloseAllTabs, Global, &["cmd+k cmd+w"], &["ctrl+k ctrl+w"]),
+    row(SplitRight, Global, &["cmd+\\"], &["ctrl+\\"]),
+    row(SplitDown, Global, &["cmd+k cmd+\\"], &["ctrl+k ctrl+\\"]),
+    row(
+        NextPane,
+        Global,
+        &["cmd+k cmd+right"],
+        &["ctrl+k ctrl+right"],
+    ),
+    row(
+        PreviousPane,
+        Global,
+        &["cmd+k cmd+left"],
+        &["ctrl+k ctrl+left"],
+    ),
+    row(SplitTerminal, Terminal, &["cmd+\\"], &[]),
+    row(
+        NextTerminalPane,
+        Terminal,
+        &["alt+cmd+right"],
+        &["alt+right"],
+    ),
+    row(
+        PreviousTerminalPane,
+        Terminal,
+        &["alt+cmd+left"],
+        &["alt+left"],
+    ),
     row(ReopenClosed, Global, &["shift+cmd+t"], &["ctrl+shift+t"]),
     row(
         NextTab,

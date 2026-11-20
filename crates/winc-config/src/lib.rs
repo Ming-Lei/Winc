@@ -24,7 +24,8 @@ pub use run::{
     script_language_ids, split_args,
 };
 pub use state::{
-    BADGE_COLORS, MAX_COMMIT_MESSAGES, MAX_RECENT, Session, State, Tab, TerminalSession,
-    WindowFrame, state_path,
+    BADGE_COLORS, MAX_COMMIT_MESSAGES, MAX_RECENT, MAX_RECENT_FILES, MAX_SESSIONS, PaneNode,
+    RECENT_IN_MENU, Session, SessionPane, SessionPanes, State, Tab, TerminalSession, WindowFrame,
+    state_path,
 };
 pub use version::compare_versions;

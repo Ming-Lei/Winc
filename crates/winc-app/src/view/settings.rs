@@ -42,11 +42,11 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
 
-    // 遮罩颜色很淡，只略微压暗下层内容，卡片自身靠阴影浮起；卡片覆盖的区域不需要再铺遮罩。
+    // 遮罩颜色很淡，只略微压暗下层内容，卡片自身靠阴影浮起。遮罩铺满整个窗口（与动画途中相同），
+    // 卡片移到哪里，下方都已压暗。
     let p = app.palette;
-    let covered = frame.covered(layout.card, RADIUS_CARD);
-    frame.rect_except(app.layout.window, p.scrim, 0.0, covered);
-    // 开始滚动时保存已绘制的窗口和遮罩，滚动期间不再重绘（`draw_scrolling`）。
+    frame.rect(app.layout.window, p.scrim);
+    // 开始滚动或拖动时保存已绘制的窗口和遮罩，期间不再重绘（`draw_scrolling`）。
     if app.settings.scrolled_at.is_some() && app.settings.scroll_base.is_none() {
         app.settings.scroll_base = Some(frame.snapshot(frame.bounds()));
     }
@@ -54,7 +54,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     draw_dialog(app, frame, &layout);
 }
 
-/// 绘制设置页滚动期间的一帧：恢复保存的窗口画面（含遮罩），只重绘卡片，返回 `true`。
+/// 绘制设置页滚动或拖动期间的一帧：恢复保存的窗口画面（含遮罩），只重绘卡片，返回 `true`。
 ///
 /// 没有快照，或窗口尺寸、缩放比例已变化时返回 `false`，由调用方完整绘制并重新保存快照。
 pub(crate) fn draw_scrolling(app: &mut App, frame: &mut Frame<'_>) -> bool {
@@ -601,6 +601,24 @@ fn draw_product(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Re
     ui_text(frame, app, x, area, &text, p.text_muted, clip);
 }
 
+/// 找到新版本 `version` 时的说明：不由应用自己更新的安装写明从哪里取得。
+fn found_text(version: &str) -> String {
+    #[cfg(not(target_os = "macos"))]
+    {
+        use crate::updates::Delivery;
+        match crate::updates::delivery() {
+            Some(Delivery::Download) => {
+                return t!("settings-updates-found-download", version = version);
+            }
+            Some(Delivery::Pacman) => {
+                return t!("settings-updates-found-pacman", version = version);
+            }
+            _ => {}
+        }
+    }
+    t!("settings-updates-found", version = version)
+}
+
 /// 「关于」页「更新」一行下方的状态文字和颜色；也是状态栏更新按钮的悬停提示（见
 /// `status::update_tooltip`）。
 pub(in crate::view) fn update_status(app: &App) -> (String, Color) {
@@ -611,11 +629,15 @@ pub(in crate::view) fn update_status(app: &App) -> (String, Color) {
         UpdateState::Idle => (t!("settings-updates-idle").to_owned(), p.text_muted),
         UpdateState::Checking => (t!("settings-updates-checking").to_owned(), p.text_muted),
         UpdateState::Latest => (t!("settings-updates-latest").to_owned(), p.text_muted),
-        UpdateState::Found(version) => (
-            t!("settings-updates-found", version = version.as_str()),
-            p.accent,
+        UpdateState::Found(version) => (found_text(version), p.accent),
+        UpdateState::Failed(None) => (t!("settings-updates-failed").to_owned(), p.text_muted),
+        UpdateState::Failed(Some(failure)) => (
+            t!(
+                "settings-updates-failed-because",
+                reason = failure.message()
+            ),
+            p.text_muted,
         ),
-        UpdateState::Failed => (t!("settings-updates-failed").to_owned(), p.text_muted),
         UpdateState::Downloading(version, percent) => (
             t!(
                 "settings-updates-downloading",

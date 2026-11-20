@@ -443,7 +443,8 @@ impl App {
         }
         let block = motion.map(TreeMotion::block);
         let hidden = motion.map_or(0.0, TreeMotion::hidden);
-        tree_row_slot(self.layout.tree, self.panels.tree.scroll, v, block, hidden)
+        let scroll = crate::layout::drawn_scroll(self.panels.tree.scroll);
+        tree_row_slot(self.layout.tree, scroll, v, block, hidden)
             .0
             .y
     }
@@ -737,7 +738,8 @@ impl App {
     pub(in crate::app) fn name_input_rect(&self) -> Option<Rect> {
         let entry = self.panels.name_input.as_ref()?;
         let tree = self.layout.tree;
-        let y = tree.y + entry.index as f32 * TREE_ROW - self.panels.tree.scroll;
+        let scroll = crate::layout::drawn_scroll(self.panels.tree.scroll);
+        let y = tree.y + entry.index as f32 * TREE_ROW - scroll;
         let rect = Rect::new(tree.x, y, tree.w, TREE_ROW);
         (rect.bottom() > tree.y && rect.y < tree.bottom()).then_some(rect)
     }
@@ -934,6 +936,9 @@ pub struct TreeState {
     pub(in crate::app) scans: crate::app::workspace::watch::TreeScans,
     /// 正在后台进行的复制（拖入、粘贴）。
     pub(in crate::app) copies: crate::app::workspace::copying::Copies,
+    /// 测试中代替系统拖放：最近一次拖出窗口的各项。
+    #[cfg(test)]
+    pub(crate) dragged_out: Vec<PathBuf>,
 }
 
 impl Default for TreeState {
@@ -950,6 +955,8 @@ impl Default for TreeState {
             drag: None,
             scans: Default::default(),
             copies: Default::default(),
+            #[cfg(test)]
+            dragged_out: Vec::new(),
         }
     }
 }

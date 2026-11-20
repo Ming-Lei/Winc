@@ -1,4 +1,4 @@
-//! 设置浮层与字号缩放的测试：模态行为、键盘遍历、鼠标命中、字体名校验、滚动、动画。
+//! 设置浮层与字号缩放的测试：模态行为、键盘遍历、鼠标命中、字体名校验、滚动、拖动、动画。
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
@@ -45,6 +45,85 @@ fn run_page_with_project_config_and_editing() {
     paint(&mut app);
     app.settings_commit_script("python", Some("C:\\venv\\python.exe".into()));
     paint(&mut app);
+}
+
+#[test]
+fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
+    use std::time::{Duration, Instant};
+
+    let dir = sample_folder("settings-drag");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    app.open_settings();
+    app.settings.motion = None;
+    paint(&mut app);
+    let before = app.settings_layout();
+    let window = app.layout.window;
+
+    // 按住标题行的空白处拖动：卡片随鼠标移动，关闭按钮等部件跟着走。
+    let header = before.header;
+    let (x, y) = (header.x + header.w / 2.0, header.y + header.h / 2.0);
+    app.on_mouse_move(x, y);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_move(x - 100.0, y + 40.0);
+    let moved = app.settings_layout();
+    assert_eq!(
+        (moved.card.x, moved.card.y),
+        (before.card.x - 100.0, before.card.y + 40.0)
+    );
+    let close = moved.close;
+    let at = (close.x + close.w / 2.0, close.y + close.h / 2.0);
+    assert_eq!(app.settings_part_at(at.0, at.1), Some(SettingsPart::Close));
+
+    // 拖动期间只重绘卡片，画面与完整绘制相同。
+    paint(&mut app);
+    assert!(app.settings.scroll_base.is_some());
+    app.on_mouse_move(x - 120.0, y + 60.0);
+    paint(&mut app);
+    let reused = app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .image()
+        .unwrap()
+        .pixels
+        .clone();
+    assert!(
+        app.settings_scroll_tick(Instant::now() + Duration::from_secs(1))
+            .is_none()
+    );
+    paint(&mut app);
+    let full = &app.frame.renderer.as_ref().unwrap().image().unwrap().pixels;
+    let differ = (reused.iter().zip(full)).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "拖动时使用快照的画面与完整绘制不同");
+
+    // 拖得再远，卡片也停在窗口四周的边距以内。
+    app.on_mouse_move(-5000.0, -5000.0);
+    app.on_mouse_up(MouseButton::Left);
+    let card = app.settings_layout().card;
+    assert_eq!(
+        (card.x, card.y),
+        (window.x + SETTINGS_MARGIN, window.y + SETTINGS_MARGIN)
+    );
+
+    // 按住时关闭设置，拖动随之结束。
+    let strip = app.settings_layout().title_strip();
+    app.on_mouse_move(strip.x + 4.0, strip.y + strip.h / 2.0);
+    app.on_mouse_down(MouseButton::Left);
+    assert!(app.settings_dragging());
+    app.close_settings();
+    assert!(!app.settings_dragging());
+    app.on_mouse_up(MouseButton::Left);
+
+    // 关闭后再打开，卡片仍在原处；点在卡片外照常关闭。
+    app.open_settings();
+    assert_eq!(app.settings_layout().card, card);
+    app.on_mouse_move(window.right() - 5.0, window.bottom() - 5.0);
+    app.on_mouse_down(MouseButton::Left);
+    app.on_mouse_up(MouseButton::Left);
+    assert!(!app.settings.open);
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -253,8 +332,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
-    // 往回走过关于页的八行（版本、更新两行、更新日志和四个链接），回到快捷键页的搜索框。
-    for _ in 0..8 {
+    // 往回走过关于页的九行（版本、更新三行、更新日志和四个链接），回到快捷键页的搜索框。
+    for _ in 0..9 {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::KeySearch);
@@ -298,12 +377,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_step(true);
     assert_eq!(app.config.language, None);
 
-    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，macOS 以外的平台还有「使用系统标题栏」，
-    // 然后是状态栏、记住窗口、动态效果三个开关和背景的图片、显示方式、不透明度，再下面是两组
-    // 主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：→ 换到下一个，外观回到深色；
-    // 到头后不再变化。
-    let title_bar = usize::from(!cfg!(target_os = "macos"));
-    for _ in 0..11 + title_bar {
+    // 浅色主题（语言下面是界面缩放、界面字体、字号、字重，然后是状态栏、动态效果、记住窗口三个
+    // 开关和各平台多出的一个（macOS 上是平滑滚动，其他平台上是使用系统标题栏），以及背景的图片、
+    // 显示方式、不透明度，再下面是两组主题）：外观为深色时选一个浅色主题，外观随之切换。深色主题：
+    // → 换到下一个，外观回到深色；到头后不再变化。
+    for _ in 0..12 {
         app.settings_move(true);
     }
     assert_eq!(app.settings.selected, Setting::LightTheme);
@@ -425,6 +503,7 @@ fn settings_pages_are_listed_on_the_left() {
             git: 1.0,
             editing: None,
             scroll: 0.0,
+            offset: (0.0, 0.0),
         };
         let layout = SettingsLayout::compute(app.layout.window, &view, &mut |_| 0.0);
         for row in &layout.rows {
@@ -1016,6 +1095,27 @@ fn the_animations_switch_overrides_the_system_setting() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// 平滑滚动默认开着，可以单独关掉，不影响其他动态效果；只在 macOS 上列出。
+#[test]
+fn smooth_scrolling_switches_off_on_its_own() {
+    let dir = sample_folder("settings-smooth-scrolling");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    assert_eq!(app.config.smooth_scrolling, None);
+    assert!(app.smooth_scrolling() && app.switch_on(Setting::SmoothScrolling));
+    assert_eq!(Setting::SmoothScrolling.page(), SettingsPage::Appearance);
+
+    app.settings_toggle(Setting::SmoothScrolling);
+    assert_eq!(app.config.smooth_scrolling, Some(false));
+    assert!(!app.smooth_scrolling() && app.animations_on());
+
+    app.open_settings();
+    app.settings_show_page(SettingsPage::Appearance);
+    let listed =
+        (app.settings_layout().rows.iter()).any(|row| row.setting == Setting::SmoothScrolling);
+    assert_eq!(listed, cfg!(target_os = "macos"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// 「Git」页只在 Git 模块开启时列出，放着 Git 的选项；停在该页时关闭模块，改到模块页。
 #[test]
 fn the_git_page_is_listed_only_when_the_module_is_on() {
@@ -1046,9 +1146,10 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitConfirmPush,
         Setting::GitRememberCredentials,
         Setting::GitAutoFetch,
-        Setting::GitSystemProxy,
     ];
     assert_eq!(rows, expected);
+    // 代理不只管 Git：放在「关于」页的更新旁边，关掉 Git 模块也找得到。
+    assert_eq!(Setting::SystemProxy.page(), SettingsPage::About);
     // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。
     assert!(app.git.commit.flat() && !app.switch_on(Setting::GitTree));
     app.settings_toggle(Setting::GitTree);

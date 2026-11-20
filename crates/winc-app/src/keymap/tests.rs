@@ -284,7 +284,7 @@ fn vscode_key_labels_per_system() {
         None
     );
 
-    // ⌃R（其他系统上 Ctrl+R）打开最近的目录；终端里交给 shell，用于反向搜索历史。
+    // ⌃R（其他系统上 Ctrl+R）打开最近的项目；终端里交给 shell，用于反向搜索历史。
     for os in ALL_OS {
         let ctrl_r = |context| runs(os, Mods::CTRL, KeyCode::Char('r'), context);
         assert_eq!(ctrl_r(Context::Editor), Some(Action::OpenRecent));
@@ -312,6 +312,37 @@ fn vscode_key_labels_per_system() {
     assert_eq!(
         runs(Os::Mac, cmd, KeyCode::Backspace, Context::Tree),
         Some(Action::DeleteFile)
+    );
+    // 永久删除跟随系统的文件管理器；编辑区中 Shift+Delete 仍是原来的操作。
+    assert_eq!(
+        runs(Os::Mac, cmd | alt, KeyCode::Backspace, Context::Tree),
+        Some(Action::DeleteFilePermanently)
+    );
+    for os in [Os::Windows, Os::Linux] {
+        let shift_delete = |context| runs(os, Mods::SHIFT, KeyCode::Delete, context);
+        assert_eq!(
+            shift_delete(Context::Tree),
+            Some(Action::DeleteFilePermanently)
+        );
+        assert_ne!(
+            shift_delete(Context::Editor),
+            Some(Action::DeleteFilePermanently)
+        );
+    }
+    // IDEA 方案中 Shift+Delete 是剪切，文件树里不绑定永久删除；macOS 上仍是 ⌥⌘⌫。
+    let idea = |os, mods, key| match lookup(
+        &Preset::Idea.bindings(os),
+        Stroke { key, mods },
+        None,
+        Context::Tree,
+    ) {
+        Lookup::Run(actions) => actions.first().copied(),
+        _ => None,
+    };
+    assert_eq!(idea(Os::Windows, Mods::SHIFT, KeyCode::Delete), None);
+    assert_eq!(
+        idea(Os::Mac, cmd | alt, KeyCode::Backspace),
+        Some(Action::DeleteFilePermanently)
     );
     assert_eq!(
         runs(Os::Mac, Mods::NONE, KeyCode::Enter, Context::Tree),

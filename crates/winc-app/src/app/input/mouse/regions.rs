@@ -124,6 +124,12 @@ impl App {
             self.close_settings();
             return;
         }
+        // 顶部一条的空白处：拖动卡片，正在编辑的输入框保持不变。
+        if part.is_none() && layout.title_strip().contains(x, y) {
+            let grab = (x - layout.card.x, y - layout.card.y);
+            self.pointer.drag = Drag::SettingsCard { grab };
+            return;
+        }
 
         if !self.keeps_key_edit(part) {
             self.cancel_key_edit();
@@ -516,6 +522,9 @@ impl App {
 
         if self.click_diff(x, y) {
             return;
+        }
+        if self.hex_active() {
+            return self.hex_press(x, y);
         }
         self.focus = Focus::Editor;
         self.ime.preedit.clear();

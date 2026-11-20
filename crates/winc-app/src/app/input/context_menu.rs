@@ -133,6 +133,12 @@ pub enum MenuCommand {
     /// 关闭所有没有未保存修改的标签。
     CloseSaved,
     CloseAll,
+    /// 在右边、下边拆出新窗格打开这个标签。
+    SplitRight,
+    SplitDown,
+    /// 把这个标签移到右边、下边新拆出的窗格。
+    MoveToSplitRight,
+    MoveToSplitDown,
     /// 把标签设为只读（`true`）或恢复为可以编辑。
     ReadOnly(bool),
     /// 把窗口里的全部标签设为只读（`true`）或恢复。
@@ -196,6 +202,8 @@ pub enum MenuCommand {
     Cut,
     Copy,
     Paste,
+    /// 远端的文件树：把这一项（多选时选中的各项）下载到本机的一个目录。
+    Download,
     GoToDefinition,
     FindReferences,
     /// 在当前行添加书签。
@@ -291,6 +299,12 @@ pub enum MenuCommand {
     LineEnding(LineEnding),
     /// 通过编码重新打开，参数为编码在 `encoding::CHOICES` 中的序号（从 0 起）。
     ReopenEncoding(usize),
+    /// 改按十六进制查看文件的字节。
+    ReopenHex,
+    /// 十六进制视图：把选中的字节按文字复制。
+    HexCopyText,
+    /// 十六进制视图：转到偏移。
+    HexGoTo,
     /// 通过编码保存，参数为编码在 `encoding::CHOICES` 中的序号（从 0 起）。
     SaveEncoding(usize),
     /// 状态栏语言菜单：改用这种语言，参数为语言在 `winc_syntax::languages()` 中的序号（从 0 起）。
@@ -471,6 +485,8 @@ pub enum MenuCommand {
     /// 把终端面板停靠到另一边。
     TerminalDock,
     NewTerminal,
+    /// 终端：拆分标签，新终端在当前终端的目录里启动。
+    SplitTerminal,
     /// 终端标签：改名字。
     RenameTerminal,
     CloseTerminal,
@@ -493,6 +509,12 @@ pub enum MenuCommand {
     ///
     /// 操作名与表格工具栏共用，见 `view::preview::markdown` 的 `table_tools`。
     Table(&'static str),
+    /// 把右键点击的图片的宽度改为正文宽度的百分比，0 表示去掉写明的大小。
+    ImageWidth(u32),
+    /// 可编辑的预览：粘贴为纯文本。
+    PastePlain,
+    /// 在新标签中打开右键点击的本地图片。
+    OpenImage,
 }
 
 /// 行尾菜单中可列出的行尾；CR 只在文件本来就是 CR 时才列出。
@@ -525,8 +547,13 @@ impl MenuCommand {
             MenuCommand::CopyReference => t!("cmd-copy-reference"),
             MenuCommand::Rename => t!("cmd-rename-file"),
             MenuCommand::Delete => t!("cmd-delete-file"),
+            MenuCommand::Download => t!("menu-download"),
             MenuCommand::Close => t!("common-close"),
             MenuCommand::CloseOthers => t!("cmd-close-other-tabs"),
+            MenuCommand::SplitRight => t!("cmd-split-right"),
+            MenuCommand::SplitDown => t!("cmd-split-down"),
+            MenuCommand::MoveToSplitRight => t!("cmd-move-to-split-right"),
+            MenuCommand::MoveToSplitDown => t!("cmd-move-to-split-down"),
             MenuCommand::CloseRight => t!("menu-close-tabs-right"),
             MenuCommand::CloseLeft => t!("menu-close-tabs-left"),
             MenuCommand::OpenFiles => t!("cmd-open-selected"),
@@ -648,6 +675,7 @@ impl MenuCommand {
             MenuCommand::TerminalClear => t!("menu-terminal-clear"),
             MenuCommand::TerminalMaximize => t!("menu-terminal-maximize"),
             MenuCommand::NewTerminal => t!("cmd-new-terminal"),
+            MenuCommand::SplitTerminal => t!("cmd-split-terminal"),
             MenuCommand::RenameTerminal => t!("cmd-rename-file"),
             MenuCommand::CloseTerminal => t!("menu-terminal-close"),
             MenuCommand::CloseOtherTerminals => t!("cmd-close-other-tabs"),
@@ -715,6 +743,15 @@ impl MenuCommand {
             MenuCommand::NewWindow => t!("cmd-new-window"),
             MenuCommand::BackgroundChoose => t!("settings-background-choose"),
             MenuCommand::BackgroundNone => t!("settings-background-none"),
+            MenuCommand::PastePlain => t!("menu-paste-plain"),
+            MenuCommand::OpenImage => t!("menu-open-image"),
+            MenuCommand::ImageWidth(percent) => match percent {
+                25 => "25%",
+                50 => "50%",
+                75 => "75%",
+                100 => "100%",
+                _ => t!("menu-image-original-size"),
+            },
             MenuCommand::TextWidth(i) => winc_config::TextWidth::ALL
                 .get(i)
                 .map_or("", |&choice| crate::layout::text_width_label(choice)),
@@ -763,6 +800,9 @@ impl MenuCommand {
             MenuCommand::ReopenEncoding(i) | MenuCommand::SaveEncoding(i) => {
                 CHOICES.get(i).map_or("", |(_, label)| label)
             }
+            MenuCommand::ReopenHex => t!("editor-encoding-hex"),
+            MenuCommand::HexCopyText => t!("menu-hex-copy-text"),
+            MenuCommand::HexGoTo => t!("menu-hex-go-to"),
             MenuCommand::UseLanguage(i) => winc_syntax::languages().get(i).map_or("", |l| l.name),
             MenuCommand::UsePlainText => winc_syntax::detect("").name,
             MenuCommand::DetectLanguage => t!("menu-detect-language"),
@@ -785,6 +825,10 @@ impl MenuCommand {
             MenuCommand::Delete => Action::DeleteFile,
             MenuCommand::Close => Action::CloseTab,
             MenuCommand::CloseOthers => Action::CloseOtherTabs,
+            MenuCommand::SplitRight => Action::SplitRight,
+            MenuCommand::SplitDown => Action::SplitDown,
+            MenuCommand::MoveToSplitRight => Action::MoveToSplitRight,
+            MenuCommand::MoveToSplitDown => Action::MoveToSplitDown,
             MenuCommand::ReadOnly(_) => Action::ToggleReadOnly,
             MenuCommand::ReadOnlyAll(_) => Action::ToggleReadOnlyAll,
             MenuCommand::CloseAll => Action::CloseAllTabs,
@@ -800,6 +844,7 @@ impl MenuCommand {
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
             MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
             MenuCommand::NewTerminal => Action::NewTerminal,
+            MenuCommand::SplitTerminal => Action::SplitTerminal,
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
             MenuCommand::GitRevertHunk => Action::GitRevertChange,

@@ -76,6 +76,14 @@ impl MenuIcon {
     }
 }
 
+/// 子菜单 `items` 这一行用谁的图标：第一项打开整个目录组时用它的，其余子菜单没有图标。
+pub(super) fn submenu_lead(items: &[MenuEntry]) -> Option<MenuCommand> {
+    match items.first() {
+        Some(&MenuEntry::Item(command @ MenuCommand::OpenGroup(_), _)) => Some(command),
+        _ => None,
+    }
+}
+
 /// 命令 `command` 的菜单项图标的逻辑尺寸（宽，高）。
 #[cfg(target_os = "macos")]
 fn menu_icon_size(command: MenuCommand) -> (f32, f32) {
@@ -270,6 +278,17 @@ impl App {
             return None;
         }
 
+        if self.hex_active() {
+            if let Some(at) = self.hex_byte_at(x, y) {
+                let inside = (self.editor.active().and_then(|d| d.hex.as_deref()))
+                    .is_some_and(|v| v.selection().contains(&at));
+                if !inside {
+                    self.hex_press(x, y);
+                    self.pointer.drag = Drag::None;
+                }
+            }
+            return self.editor.active().map(|d| d.id);
+        }
         let pos = self.pos_at(x.max(l.text.x), y)?;
         let doc = self.editor.active_mut()?;
         if !doc.shows_text() {
@@ -364,7 +383,7 @@ impl App {
                 let current = root.and_then(|r| self.state.recent.iter().position(|p| p == r));
                 let mut menu: Vec<MenuEntry> = Vec::new();
                 menu.extend(project_menu(
-                    self.state.recent.len(),
+                    self.state.recent.len().min(winc_config::RECENT_IN_MENU),
                     current,
                     root.is_some(),
                     crate::system::wsl_distributions().len(),
@@ -382,7 +401,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|w| w.multi_selected()) =>
             {
-                tree_selection_menu(self.tree_selected_files().len())
+                let targets = self.tree_targets();
+                let remote =
+                    !targets.is_empty() && targets.iter().all(|p| winc_backend::is_remote(p));
+                tree_selection_menu(self.tree_selected_files().len(), remote)
             }
             MenuTarget::Tree(path) => {
                 // 目录自己的一行和空白处一样：不能改名、剪切、删除。
@@ -394,7 +416,8 @@ impl App {
                     ws.row_of(p).map(|i| ws.rows()[i].kind)
                 });
                 let can_paste = self.can_paste_into_tree();
-                let mut menu = tree_menu(kind, can_paste);
+                let remote = path.as_deref().is_some_and(winc_backend::is_remote);
+                let mut menu = tree_menu(kind, can_paste, remote);
                 if kind.is_none() {
                     menu.extend(self.folder_items(folder));
                 }
@@ -411,10 +434,13 @@ impl App {
                 }
                 menu
             }
-            MenuTarget::Editor(id) => {
+            MenuTarget::Editor(id) => 'editor: {
                 let Some(doc) = self.editor.document(*id) else {
                     return;
                 };
+                if let Some(view) = doc.hex.as_deref() {
+                    break 'editor hex_menu(view.size() > 0);
+                }
                 let bookmarked = doc
                     .bookmarks()
                     .lines()
@@ -448,9 +474,29 @@ impl App {
                     MenuEntry::Item(MenuCommand::Cut, selected),
                     MenuEntry::Item(MenuCommand::Copy, selected),
                     MenuEntry::Item(MenuCommand::Paste, true),
+                    MenuEntry::Item(MenuCommand::PastePlain, true),
                     MenuEntry::Separator,
                     MenuEntry::Item(MenuCommand::SelectAll, true),
                 ];
+                // 右键点击图片时提供「在新标签中打开图片」和「图片大小」，两项同在一组。
+                let (picture, image) = (
+                    self.preview.markdown.menu_picture.is_some(),
+                    self.preview.markdown.menu_image.is_some(),
+                );
+                if picture || image {
+                    menu.push(MenuEntry::Separator);
+                }
+                if picture {
+                    menu.push(MenuEntry::Item(MenuCommand::OpenImage, true));
+                }
+                if image {
+                    use crate::app::preview::markdown::resize::PRESETS;
+                    let sizes = PRESETS.map(|p| MenuEntry::Item(MenuCommand::ImageWidth(p), true));
+                    menu.push(MenuEntry::Submenu(
+                        t!("menu-image-size").into(),
+                        sizes.into(),
+                    ));
+                }
                 // 光标位于表格中时提供「表格」子菜单，集中列出行、列的编辑操作。
                 if let Some(table) = self.live_table_menu() {
                     menu.extend([
@@ -475,6 +521,12 @@ impl App {
                     MenuEntry::Item(MenuCommand::Copy, self.markdown_selected_text().is_some()),
                     MenuEntry::Item(MenuCommand::SelectAll, true),
                 ];
+                if self.preview.markdown.menu_picture.is_some() {
+                    menu.extend([
+                        MenuEntry::Separator,
+                        MenuEntry::Item(MenuCommand::OpenImage, true),
+                    ]);
+                }
                 // docx、EPUB 的阅读视图由转换得到，阅读标签只有排版后的内容：都没有可以显示的
                 // 源代码。
                 let has_source = self
@@ -497,8 +549,9 @@ impl App {
                 }
                 menu
             }
-            MenuTarget::TerminalTab(_) => vec![
+            MenuTarget::TerminalTab(id) => vec![
                 MenuEntry::Item(MenuCommand::RenameTerminal, true),
+                MenuEntry::Item(MenuCommand::SplitTerminal, self.terminal_splittable(*id)),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuCommand::CloseTerminal, true),
                 MenuEntry::Item(
@@ -576,11 +629,17 @@ impl App {
                 let Some(doc) = self.editor.document(*id) else {
                     return;
                 };
-                let reopen = doc.path.is_some()
-                    && !doc.is_large()
-                    && doc.encoding != winc_editor::Encoding::Binary;
-                encoding_menu(reopen, |encoding| {
-                    doc.encoding.writable() && doc.can_save_with(encoding)
+                // 十六进制视图没有文本，按文件的大小判断是不是大文件。
+                let large = doc.is_large()
+                    || (doc.hex.as_deref()).is_some_and(|v| v.size() > winc_editor::LARGE_FILE);
+                let utf8_only = doc.hex.is_some() && large;
+                let reopen = |encoding| {
+                    doc.path.is_some()
+                        && (!large || utf8_only && encoding == winc_editor::Encoding::Utf8)
+                };
+                let hex = doc.path.is_some() && doc.hex.is_none();
+                encoding_menu(reopen, hex, |encoding| {
+                    doc.hex.is_none() && doc.encoding.writable() && doc.can_save_with(encoding)
                 })
             }
             MenuTarget::Language(id) => {
@@ -637,7 +696,7 @@ impl App {
             MenuTarget::CommitButton => self.commit_button_menu(),
             MenuTarget::LastCommit => self.last_commit_menu(),
             MenuTarget::TreeTools => self.tree_tools_menu(),
-            MenuTarget::TabList => (0..self.editor.documents.len())
+            MenuTarget::TabList => (0..self.editor.tab_count())
                 .map(|i| MenuEntry::Item(MenuCommand::ShowTab(i), true))
                 .collect(),
             MenuTarget::RunConfigs => (0..self.run.list.len())
@@ -704,7 +763,8 @@ impl App {
         };
         let entries = match place {
             Some(path) if winc_backend::is_remote(path) => {
-                without_local_only(entries, self.terminal_enabled())
+                let mounted = self.local_folder(path).is_some();
+                without_local_only(entries, self.terminal_enabled(), mounted)
             }
             _ => entries,
         };
@@ -860,8 +920,8 @@ impl App {
                 MenuEntry::Submenu(title, items) => Some(Prepared {
                     label: MenuLabel::plain(title),
                     key: Default::default(),
-                    icon: None,
-                    icon_size: MENU_ICON,
+                    icon: submenu_lead(items).and_then(|c| self.menu_icon(c)),
+                    icon_size: submenu_lead(items).map_or(MENU_ICON, menu_icon_size),
                     enabled: true,
                     checked: false,
                     alternate: false,
@@ -978,8 +1038,9 @@ impl App {
                 MenuCommand::IndentSize(n) => doc.indent_size(tab_width) == n,
                 MenuCommand::LineEnding(eol) => doc.line_ending == eol,
                 MenuCommand::ReopenEncoding(i) | MenuCommand::SaveEncoding(i) => {
-                    CHOICES.get(i).is_some_and(|(e, _)| *e == doc.encoding)
+                    doc.hex.is_none() && CHOICES.get(i).is_some_and(|(e, _)| *e == doc.encoding)
                 }
+                MenuCommand::ReopenHex => doc.hex.is_some(),
                 MenuCommand::UseLanguage(i) => (winc_syntax::languages().get(i))
                     .is_some_and(|l| std::ptr::eq(*l, doc.highlighter.language())),
                 MenuCommand::UsePlainText => doc.highlighter.language().id == "text",

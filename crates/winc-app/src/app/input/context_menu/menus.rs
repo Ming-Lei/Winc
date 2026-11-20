@@ -29,13 +29,20 @@ pub fn indent_menu(size_title: &str, editable: bool) -> Vec<MenuEntry> {
 
 /// 返回状态栏编码菜单的菜单项：两个子菜单「通过编码重新打开」「通过编码保存」，内容是各种编码。
 ///
-/// `reopen` 表示能否重新打开（大文件、二进制文件、未命名的文档不能）；`save` 返回能否改用某种
-/// 编码保存（只读的文档都不能，大文件只能用 UTF-8）。
-pub fn encoding_menu(reopen: bool, save: impl Fn(Encoding) -> bool) -> Vec<MenuEntry> {
-    use MenuCommand::{ReopenEncoding, SaveEncoding};
-    use MenuEntry::{Item, Submenu};
+/// `reopen` 返回能否按某种编码重新打开（未命名的文档都不能，大文件只能用 UTF-8），`hex` 表示能否
+/// 改按十六进制查看（有对应的文件就能）；`save` 返回能否改用某种编码保存（只读的文档都不能，大
+/// 文件只能用 UTF-8）。
+pub fn encoding_menu(
+    reopen: impl Fn(Encoding) -> bool,
+    hex: bool,
+    save: impl Fn(Encoding) -> bool,
+) -> Vec<MenuEntry> {
+    use MenuCommand::{ReopenEncoding, ReopenHex, SaveEncoding};
+    use MenuEntry::{Item, Separator, Submenu};
 
-    let reopen = (0..CHOICES.len()).map(|i| Item(ReopenEncoding(i), reopen));
+    let reopen = (CHOICES.iter().enumerate())
+        .map(|(i, &(encoding, _))| Item(ReopenEncoding(i), reopen(encoding)))
+        .chain([Separator, Item(ReopenHex, hex)]);
     let save = CHOICES
         .iter()
         .enumerate()
@@ -111,15 +118,16 @@ pub fn document_language_menu(named: bool) -> Vec<MenuEntry> {
 
 /// 去掉 `menu` 中只能在本机执行的项，并合并因此相邻的分隔线。
 ///
-/// 远端主机上的文件无法交给本机的文件管理器；`terminal` 为 `false`（终端模块关闭）时
+/// 远端主机上的文件无法交给本机的文件管理器，除非它所在的目录挂载在本机（`mounted`，见配置项
+/// `remote.localFolders`），此时显示的是本机上的那一份；`terminal` 为 `false`（终端模块关闭）时
 /// 「在终端中打开」只能启动本机的终端程序，同样去掉。
-pub fn without_local_only(menu: Vec<MenuEntry>, terminal: bool) -> Vec<MenuEntry> {
+pub fn without_local_only(menu: Vec<MenuEntry>, terminal: bool, mounted: bool) -> Vec<MenuEntry> {
     use MenuCommand::{LocationReveal, OpenInTerminal, Reveal};
 
     let mut kept: Vec<MenuEntry> = Vec::with_capacity(menu.len());
     for entry in menu {
         let dropped = match &entry {
-            MenuEntry::Item(Reveal | LocationReveal, _) => true,
+            MenuEntry::Item(Reveal | LocationReveal, _) => !mounted,
             MenuEntry::Item(OpenInTerminal, _) => !terminal,
             MenuEntry::Separator => matches!(kept.last(), None | Some(MenuEntry::Separator)),
             _ => false,
@@ -137,8 +145,9 @@ pub fn without_local_only(menu: Vec<MenuEntry>, terminal: bool) -> Vec<MenuEntry
 /// 返回文件树菜单的菜单项。
 ///
 /// `kind` 是右键点中的那一项的类型，`None` 表示空白处（根目录）：根目录不能改名、删除，
-/// 也没有相对路径。「在目录中查找」只对目录和根目录出现。
-pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool) -> Vec<MenuEntry> {
+/// 也没有相对路径。「在目录中查找」只对目录和根目录出现。`remote` 表示这一项在远端主机上，
+/// 此时可以下载到本机。
+pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool, remote: bool) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
@@ -153,6 +162,9 @@ pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool) -> Vec<MenuEntry> {
         menu.extend([Item(Cut, true), Item(Copy, true)]);
     }
     menu.push(Item(Paste, can_paste));
+    if remote && kind.is_some() {
+        menu.push(Item(Download, true));
+    }
     menu.push(Separator);
     menu.push(Item(CopyPath, true));
     if kind.is_some() {
@@ -170,8 +182,9 @@ pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool) -> Vec<MenuEntry> {
 /// 文件时灰显）、比较所选文件（正好两个文件时才有）、剪切、复制、复制路径、复制相对路径和删除，
 /// 都作用于选中的各项。
 ///
-/// 新建、改名等在多项选择下没有意义的项不出现。
-pub fn tree_selection_menu(files: usize) -> Vec<MenuEntry> {
+/// 新建、改名等在多项选择下没有意义的项不出现。`remote` 表示选中的各项在远端主机上，此时
+/// 可以下载到本机。
+pub fn tree_selection_menu(files: usize, remote: bool) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
@@ -179,10 +192,11 @@ pub fn tree_selection_menu(files: usize) -> Vec<MenuEntry> {
     if files == 2 {
         menu.push(Item(CompareFiles, true));
     }
+    menu.extend([Separator, Item(Cut, true), Item(Copy, true)]);
+    if remote {
+        menu.push(Item(Download, true));
+    }
     menu.extend([
-        Separator,
-        Item(Cut, true),
-        Item(Copy, true),
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, true),
@@ -216,6 +230,11 @@ pub fn tab_menu(
         Item(CloseRight, last + 1 < count),
         Item(CloseSaved, any_saved),
         Item(CloseAll, true),
+        Separator,
+        Item(SplitRight, true),
+        Item(SplitDown, true),
+        Item(MoveToSplitRight, count > 1),
+        Item(MoveToSplitDown, count > 1),
         Separator,
         Item(CopyPath, has_path),
         Item(CopyRelativePath, in_workspace),
@@ -409,8 +428,21 @@ pub fn search_result_menu(file: bool, replace: bool) -> Vec<MenuEntry> {
 /// `bookmarked` 决定「添加书签」「删除书签」哪个可用。没有选区时剪切、复制作用于光标所在的整行，
 /// 与 `⌘X`、`⌘C` 相同；只读的文件不能格式化、剪切、粘贴。格式化和修复总是可以点击，无法执行时
 /// 点击后说明原因。「粘贴」不检查剪贴板里有没有文字：弹出菜单不应读取其他应用复制的内容。
-/// `script` 为 `true`（当前文档是可运行的脚本）时有「运行脚本」和「运行脚本…」两项，前者用上次
-/// 记忆的参数，后者先自定义参数再运行。
+/// 返回十六进制视图的右键菜单：复制（写成十六进制）、按文字复制、全选、转到偏移。
+///
+/// `selected` 为 `false`（空文件）时不能复制。
+pub fn hex_menu(selected: bool) -> Vec<MenuEntry> {
+    use MenuCommand::*;
+    use MenuEntry::{Item, Separator};
+    vec![
+        Item(Copy, selected),
+        Item(HexCopyText, selected),
+        Separator,
+        Item(SelectAll, true),
+        Item(HexGoTo, true),
+    ]
+}
+
 pub fn editor_menu(
     editable: bool,
     selected: bool,
@@ -475,6 +507,7 @@ pub fn terminal_menu(selected: bool, running: bool, block: Option<(bool, bool)>)
         Item(TerminalDock, true),
         Separator,
         Item(NewTerminal, true),
+        Item(SplitTerminal, running),
         Item(CloseTerminal, true),
     ]);
     menu

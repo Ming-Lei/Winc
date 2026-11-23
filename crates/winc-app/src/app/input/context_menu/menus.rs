@@ -553,7 +553,7 @@ pub fn editor_menu(
     }
     menu.push(Item(Fix, editable));
     if script {
-        menu.extend([Separator, Item(RunScript, true), Item(RunScriptArgs, true)]);
+        menu.extend([Separator, Item(RunScript, true)]);
     }
     menu.extend([
         Separator,

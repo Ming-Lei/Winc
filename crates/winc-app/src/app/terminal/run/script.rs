@@ -48,7 +48,8 @@ pub(super) fn script_config(
     kind: ShellKind,
     system: (bool, bool),
 ) -> Option<RunConfig> {
-    let command = script_command(path, kind, system)?;
+    let command = script_command(path, kind, system)
+        .or_else(|| winc_config::script(path).map(|script| script.command))?;
     let dir = path.parent()?;
     let cwd = match dir.strip_prefix(root) {
         Ok(inside) if inside.as_os_str().is_empty() => None,
@@ -83,12 +84,40 @@ impl App {
             return None;
         }
         let windows = cfg!(windows);
+        let name = path.file_name()?.to_string_lossy();
+        let language = winc_syntax::detect(name.as_ref()).id;
+        let configured = self.config.script_commands.get(language).cloned();
+        if let Some(loc) = winc_editor::wsl::locate_here(path) {
+            let script = winc_config::script(path)?;
+            let interpreter = configured.as_deref().unwrap_or_else(|| {
+                if script.command == "python" { "python3" } else { script.command }
+            });
+            let cwd = Path::new(&loc.path)
+                .parent()
+                .map(|dir| dir.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "/".to_owned());
+            return Some(RunConfig {
+                name: format!("Run {name}"),
+                command: format!("wsl.exe -d {} --cd {cwd} -- {interpreter}", loc.distro),
+                args: vec![loc.path.clone()],
+                cwd: None,
+                env: Vec::new(),
+            });
+        }
         let dir = os_bytes(path.parent()?.as_os_str());
         let shell = self.config.terminal_shell.as_deref();
         let shell = shell.filter(|_| default_shell_applies(&dir, windows));
         let kind = launch_kind(&launch(shell, dir, windows, Integration::Off), windows);
         let direct = !windows && runs_directly(path);
-        script_config(path, root, kind, (windows, direct))
+        let mut config = script_config(path, root, kind, (windows, direct))?;
+        if let Some(command) = configured {
+            config.command = if command.split_whitespace().count() > 1 {
+                command
+            } else {
+                super::quote(&command, kind)
+            };
+        }
+        Some(config)
     }
 
     /// 文件树中的文件 `path` 是否列出「在终端中运行」。

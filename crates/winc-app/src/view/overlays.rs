@@ -262,11 +262,6 @@ pub(super) fn draw_goto(app: &mut App, frame: &mut Frame<'_>) {
                     commit = crate::app::git::log::short(at)
                 ),
             ),
-            crate::app::PromptKind::RunArgs { .. } => (
-                t!("workspace-run-args-title"),
-                t!("workspace-run-args-placeholder"),
-                t!("workspace-run-args-hint").to_owned(),
-            ),
             // Vim 模式的命令行与查找画在状态栏所在的一行，不经此处。
             crate::app::PromptKind::VimSearch { .. } | crate::app::PromptKind::VimCommand => {
                 ("", "", String::new())

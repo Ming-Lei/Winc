@@ -91,7 +91,7 @@ pub use workspace::tree::{NameInput, TreeMotion};
 pub use workspace::tree_drag::TreeDrag;
 pub use workspace::tree_label::{LabelCause, LabelView, TreeLabels};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, mpsc};
@@ -366,8 +366,6 @@ pub enum UserEvent {
 /// 编辑区顶部输入条的当前用途。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptKind {
-    /// 运行脚本前的自定义参数。
-    RunArgs { id: DocumentId },
     /// 跳转到行（`⌃G`）。
     GoTo,
     /// 十六进制视图里转到偏移（`⌃G`）。
@@ -993,7 +991,6 @@ pub struct App {
     /// 在文件中查找的对话框。
     pub(crate) search_dialog: workspace::search_dialog::SearchDialog,
     /// 每个脚本文件上次「自定义参数」运行用的参数（路径 → 参数字符串），会话内有效。
-    pub run_args_memory: HashMap<PathBuf, String>,
 
     // 快速打开
     /// 与磁盘的同步：目录的监视，以及文件在后台的读取、保存和改动。

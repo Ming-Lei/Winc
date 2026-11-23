@@ -159,20 +159,14 @@ impl App {
             | MenuCommand::GitPullMerge
             | MenuCommand::GitContinue
             | MenuCommand::GitAbort => self.git_label(command),
-            // 「运行脚本」的文字带上解释器名（如「运行 Python」）；「…」提示会弹出输入条。
-            MenuCommand::RunScript | MenuCommand::RunScriptArgs => {
+            MenuCommand::RunScript => {
                 let tool = self
                     .editor
                     .active()
                     .and_then(|doc| doc.path.as_deref())
                     .and_then(winc_config::script)
                     .map_or("", |script| script.tool);
-                let message = if command == MenuCommand::RunScriptArgs {
-                    t!("menu-run-script-args", tool = tool)
-                } else {
-                    t!("menu-run-script", tool = tool)
-                };
-                MenuLabel::plain(&message)
+                MenuLabel::plain(&t!("menu-run-script", tool = tool))
             }
             _ => MenuLabel::plain(command.label()),
         }

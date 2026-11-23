@@ -182,7 +182,6 @@ impl App {
             },
             word_highlights: Vec::new(),
             search_dialog: Default::default(),
-            run_args_memory: std::collections::HashMap::new(),
             hits: Default::default(),
             disk: crate::app::workspace::DiskState {
                 watcher: None,

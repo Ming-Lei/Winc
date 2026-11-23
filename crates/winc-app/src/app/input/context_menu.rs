@@ -221,8 +221,6 @@ pub enum MenuCommand {
     Format,
     FormatSelection,
     Fix,
-    /// 编辑区：运行前自定义参数（弹出顶部输入条），`↩` 运行并记忆参数。
-    RunScriptArgs,
     /// 设置中「添加语言…」菜单的一项，参数为语言在 `winc_syntax::languages()` 中的序号（从 0 起）。
     Language(usize),
     /// 设置中「排除的语言」菜单的一项：切换某种语言保存时是否跳过格式化和修复，
@@ -830,8 +828,6 @@ impl MenuCommand {
             MenuCommand::Format => t!("cmd-format"),
             MenuCommand::FormatSelection => t!("cmd-format-selection"),
             MenuCommand::Fix => t!("cmd-fix"),
-            // 标题带解释器名（「运行 Python」），由 `menu_label` 给出，这里返回空串。
-            MenuCommand::RunScriptArgs => "",
             MenuCommand::ToolAuto => t!("format-tool-auto"),
             MenuCommand::ToolPreset(i) => PRESETS.get(i).map_or("", |p| p.name),
             MenuCommand::ToolCustom => t!("format-tool-custom-command"),
@@ -863,7 +859,7 @@ impl MenuCommand {
     pub fn action(self) -> Option<Action> {
         Some(match self {
             // 「运行脚本」没有对应键位，只从右键菜单触发。
-            MenuCommand::RunScript | MenuCommand::RunScriptArgs => return None,
+            MenuCommand::RunScript => return None,
             MenuCommand::GitAction(action) => action,
             // 日志中 ⌘C 复制选中提交的提交号；右键时选中的就是这个提交。
             MenuCommand::LogCopyOid => Action::Copy,

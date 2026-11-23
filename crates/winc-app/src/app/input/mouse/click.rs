@@ -190,6 +190,8 @@ impl App {
             Target::Picker => {
                 self.click_picker(x, y);
             }
+            Target::SearchDialog(part) => self.press_search_dialog(part, x, y),
+            Target::SearchDock(part) => self.press_docked_search(part, x, y),
             _ if self.overlays.picker.open => self.close_picker(),
             Target::Scrollbar(
                 bar @ (Scrollbar::Panel
@@ -242,6 +244,11 @@ impl App {
             }
             Target::PdfThumb(to) => self.scroll_pdf_to(to),
             Target::PdfTool(tool) => self.press_pdf_tool(tool),
+            Target::LatexStatus => self.open_latex_problems(),
+            Target::LatexProblem(line) => self.go_to_latex_problem_line(line),
+            Target::LatexSource => {
+                self.latex_source_at(x, y);
+            }
             Target::Tab(index, true) => {
                 self.pointer.close_pressed = self.editor.documents.get(index).map(|d| d.id);
             }
@@ -265,6 +272,17 @@ impl App {
             Target::Placeholder(action) => self.run_placeholder_action(action),
             Target::Suggest(row) => self.accept_suggest(row),
             Target::SelectionTool(tool) => self.run_selection_tool(tool),
+            // 文件栏的右边缘：双击恢复默认宽度，否则开始拖动。
+            Target::Diff(crate::app::DiffTarget::FilesEdge) => {
+                if self.click_count(x, y) == 2 {
+                    self.reset_log_files_width();
+                } else {
+                    self.pointer.drag = Drag::DiffFiles {
+                        start_x: x,
+                        start_width: self.log_files_width(),
+                    };
+                }
+            }
             Target::Diff(target) => self.press_diff(target),
             Target::Log(crate::app::git::log::LogTarget::AuthorEdge) => {
                 let double = self.click_count(x, y) == 2;
@@ -279,6 +297,18 @@ impl App {
                     self.pointer.drag = Drag::LogDivider {
                         start_x: x,
                         start_width: self.log_parts().details.w,
+                    };
+                }
+            }
+            Target::Log(crate::app::git::log::LogTarget::BranchesEdge) => {
+                // 双击回到默认宽度。
+                if self.click_count(x, y) == 2 {
+                    self.git.log.branches_w = None;
+                    self.request_redraw();
+                } else {
+                    self.pointer.drag = Drag::LogBranches {
+                        start_x: x,
+                        start_width: self.log_parts().branches_w,
                     };
                 }
             }
@@ -363,8 +393,14 @@ impl App {
             }
             Target::TerminalHeader(hit) => {
                 use crate::app::terminal::HeaderHit;
+                if matches!(hit, HeaderHit::Tab(_) | HeaderHit::New) {
+                    self.search_dialog.in_panel = false;
+                }
                 self.focus = Focus::Terminal;
                 match hit {
+                    HeaderHit::SearchTab => self.show_docked_search(),
+                    HeaderHit::SearchClose => self.close_docked_search(),
+                    HeaderHit::SearchDialog => self.open_search_dialog_with(None),
                     // 双击标签重命名。
                     HeaderHit::Tab(i) if self.click_count(x, y) == 2 => {
                         self.activate_terminal_tab(i);

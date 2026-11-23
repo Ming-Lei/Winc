@@ -312,8 +312,9 @@ impl App {
             status_height,
         );
         // 差异标签：查找条放在差异的标题栏下面，不盖住标题栏右端的按钮。
-        if self.layout.search.h > 0.0 && self.editor.active().is_some_and(|d| d.diff.is_some()) {
-            self.layout.search.y += crate::app::diff::DIFF_HEADER;
+        let diff = self.editor.active().and_then(|d| d.diff.as_deref());
+        if let Some(view) = diff.filter(|_| self.layout.search.h > 0.0) {
+            self.layout.search.y += crate::app::diff::diff_top(view);
         }
 
         self.place_terminal();
@@ -329,8 +330,8 @@ impl App {
         }
 
         self.place_outline();
-        // 搜索和历史差异各有自己的列表，不能命中工作区文件树原来的区域。
-        if self.panels.sidebar.view == SidebarView::Search || self.log_diff_tree().is_some() {
+        // 搜索有自己的列表，不能命中工作区文件树原来的区域。
+        if self.panels.sidebar.view == SidebarView::Search {
             let tree = self.layout.tree;
             self.layout.tree = Rect::new(tree.x, tree.y, 0.0, 0.0);
         }
@@ -668,6 +669,7 @@ impl App {
         self.advance_fling(Instant::now());
         self.continue_drag_scroll();
         self.track_modules();
+        self.track_about_logo();
         self.track_commit_bars();
         self.track_search_rows();
         self.track_words();
@@ -734,7 +736,9 @@ impl App {
         self.after_terminal_frame();
         self.frame.presented += 1;
 
-        match self.frame.bench.on_present(self.frame.presented, elapsed) {
+        let loading = self.editor.active().is_some_and(|d| d.is_pending());
+        let next = (self.frame.bench).on_present(self.frame.presented, elapsed, loading);
+        match next {
             Next::Continue => {}
             // 应用层看到以后结束事件循环（测量时只有一个窗口）。
             Next::Exit => self.closing.quit_requested = true,

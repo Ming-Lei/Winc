@@ -6,6 +6,7 @@ use winc_core::transform::Case;
 use winc_editor::panes::Axis;
 use winc_editor::{Command, EntryKind, FoldCommand};
 use winc_preview::markdown::paragraph::Kind;
+use winit::keyboard::NamedKey;
 
 use super::*;
 use crate::field::TextField;
@@ -58,7 +59,7 @@ impl App {
         if self.focus == Focus::Terminal {
             match action {
                 Copy => {
-                    self.terminal_copy();
+                    self.terminal_copy(false);
                     return true;
                 }
                 SelectAll => {
@@ -99,6 +100,7 @@ impl App {
             GoToSymbol => self.open_symbols(),
             GoToLine => self.open_goto(),
             GoToDefinition => self.go_to_definition(),
+            OpenLink => self.open_caret_link(),
             FindReferences => self.find_references(),
             // 有日志标签且可以后退时先在日志里后退；日志里已经找不到的提交（例如被跳过的
             // 父提交）直接跳过，继续找回更早的记录。
@@ -256,6 +258,27 @@ impl App {
             }
             DeleteLine => editing(self, Command::DeleteLine),
             DeleteAllLeft => editing(self, Command::DeleteToLineStart),
+            CursorLeft => self.press_editor_key(NamedKey::ArrowLeft),
+            CursorRight => self.press_editor_key(NamedKey::ArrowRight),
+            CursorUp => self.press_editor_key(NamedKey::ArrowUp),
+            CursorDown => self.press_editor_key(NamedKey::ArrowDown),
+            CursorHome => self.press_editor_key(NamedKey::Home),
+            CursorEnd => self.press_editor_key(NamedKey::End),
+            CursorLineStart | CursorLineEnd => {
+                let extend = self.pointer.modifiers.shift_key();
+                self.run_key_command(if action == CursorLineStart {
+                    Command::WholeLineStart { extend }
+                } else {
+                    Command::WholeLineEnd { extend }
+                });
+            }
+            DeleteLeft => self.press_editor_key(NamedKey::Backspace),
+            DeleteRight => self.press_editor_key(NamedKey::Delete),
+            DeleteAllRight => editing(self, Command::DeleteToLineEnd),
+            CutToLineEnd => self.cut_to_line_end(),
+            TransposeLetters => editing(self, Command::TransposeChars),
+            InsertLineBreak => editing(self, Command::LineBreakInsert),
+            ScrollToCenter => self.recenter_caret(),
             IndentLines => editing(self, Command::IndentLines),
             OutdentLines => editing(self, Command::Outdent),
             MoveLinesUp => editing(self, Command::MoveLines { down: false }),
@@ -295,6 +318,19 @@ impl App {
             SortLinesAscending => editing(self, Command::SortLines { descending: false }),
             SortLinesDescending => editing(self, Command::SortLines { descending: true }),
             TrimTrailingWhitespace => editing(self, Command::TrimTrailingWhitespace),
+            UnescapeUnicode | EscapeUnicode => {
+                // 所有选区都是空的才转换整个文件，否则只转换选中的部分。
+                let whole = (self.editor.active())
+                    .is_some_and(|d| d.selections().0.iter().all(|s| s.is_empty()));
+                editing(
+                    self,
+                    if action == UnescapeUnicode {
+                        Command::UnescapeUnicode { whole }
+                    } else {
+                        Command::EscapeUnicode { whole }
+                    },
+                );
+            }
             IndentUsingSpaces => self.use_indent(false),
             IndentUsingTabs => self.use_indent(true),
             ConvertIndentationToSpaces => self.convert_indentation(false),
@@ -351,6 +387,15 @@ impl App {
             ReplaceOne if self.bars.find.open => self.replace_current(),
             ReplaceAll if self.bars.find.open => self.replace_all(),
             ReplaceOne | ReplaceAll => return false,
+            ToggleCase | ToggleWord | ToggleRegex
+                if matches!(self.focus, Focus::SearchDialog | Focus::SearchMask) =>
+            {
+                self.toggle_search_dialog_option(match action {
+                    ToggleCase => PanelButton::Case,
+                    ToggleWord => PanelButton::Word,
+                    _ => PanelButton::Regex,
+                })
+            }
             ToggleCase | ToggleWord | ToggleRegex if panel => {
                 self.press_panel_button(match action {
                     ToggleCase => PanelButton::Case,
@@ -371,7 +416,12 @@ impl App {
                 }
                 self.press_search_button(SearchButton::Filter);
             }
+            FindInFiles if self.search_style() == winc_config::SearchStyle::Dialog => {
+                self.open_search_dialog()
+            }
             FindInFiles => self.open_global_search(false),
+            OpenSearchDialog if self.focus.in_panel() => self.open_search_dialog_from_panel(),
+            OpenSearchDialog => self.open_search_dialog(),
             ReplaceInFiles => self.open_global_search(true),
             ReplaceAllInFiles => self.ask_replace_all(),
             NextResult => self.next_result(false),
@@ -451,6 +501,9 @@ impl App {
             }
             GitShowLog => self.git_show_log(),
             GitGoToRevision => self.open_go_to_revision(),
+            GitRewordCommit => self.reword_selected_commit(),
+            GitGoToChildCommit => self.go_to_log_relative(false),
+            GitGoToParentCommit => self.go_to_log_relative(true),
             GitShowOutput => self.show_git_output(),
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
@@ -459,15 +512,22 @@ impl App {
             GitNewWorktree => self.open_worktree_dialog(),
             // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
             GitSwitchBranch | GitNewBranch | GitStash | GitSync | GitFetch | GitPull
-            | GitPullRebase | GitPush | GitStageAll | GitUnstageAll | GitStageFile
+            | GitPullRebase | GitPullFrom | GitPush | GitPushTo | GitStageAll | GitUnstageAll
+            | GitStageFile
                 if self.git.root.is_none() =>
             {
                 self.flash(winc_i18n::t!("git-not-a-repository"));
+            }
+            // 拉取自…、推送到…按当前分支选目标：游离的 `HEAD` 上没有分支可用。
+            GitPullFrom | GitPushTo if !self.on_branch() => {
+                self.flash(winc_i18n::t!("git-not-on-branch"));
             }
             GitSwitchBranch => self.switch_branch_from_command(),
             GitNewBranch => self.open_branch_dialog(None, None),
             GitStash => self.open_stash_prompt(),
             GitSync => self.git_sync(),
+            GitPullFrom => self.open_pull_dialog(),
+            GitPushTo => self.push_to(),
             GitStageAll => self.stage_all(true),
             GitUnstageAll => self.stage_all(false),
             GitStageFile => self.stage_current_file(),
@@ -497,6 +557,8 @@ impl App {
             StopConfiguration => self.stop_current_config(),
             EditRunConfigurations => self.edit_run_configs(),
             ClearTerminal => self.clear_terminal(),
+            TerminalCopy => self.terminal_copy(false),
+            TerminalPaste => self.terminal_paste(),
             NewTerminal => self.new_terminal_tab(),
             CloseTerminal => self.close_terminal_pane(),
             NextTerminal => self.cycle_terminal_tab(true),
@@ -534,6 +596,14 @@ impl App {
     pub(in crate::app) fn action_available(&self, action: Action) -> bool {
         match action {
             Action::RunConfiguration if self.editor.root().is_none() => return false,
+            // 编辑提交说明只在日志里可用；其余位置同一个键执行其他命令。
+            Action::GitRewordCommit if !self.log_active() => return false,
+            // 转到子提交、父提交只在日志的提交列表上可用：文件列表里 `←` 是返回。
+            Action::GitGoToChildCommit | Action::GitGoToParentCommit
+                if !self.log_list_focused() =>
+            {
+                return false;
+            }
             // 只有打开的目录还不是仓库时才能初始化。
             Action::GitInit if self.editor.root().is_none() || self.git.root.is_some() => {
                 return false;

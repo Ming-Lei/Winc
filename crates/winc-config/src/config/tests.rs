@@ -22,6 +22,44 @@ fn auto_save_reads_its_values_and_the_old_switch() {
     assert!(!problems.is_empty());
 }
 
+/// `editor.smoothCaretMovement` 读三个取值，其他值报告问题并忽略。
+#[test]
+fn smooth_caret_movement_reads_its_values() {
+    assert_eq!(Config::default().smooth_caret_movement, None);
+    for (value, expected) in [
+        ("off", SmoothCaret::Off),
+        ("snappy", SmoothCaret::Snappy),
+        ("gliding", SmoothCaret::Gliding),
+    ] {
+        let text = format!(r#"{{"editor":{{"smoothCaretMovement":"{value}"}}}}"#);
+        let (config, problems) = Config::parse(&text);
+        assert!(problems.is_empty(), "{value}");
+        assert_eq!(config.smooth_caret_movement, Some(expected));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"editor":{"smoothCaretMovement":"smooth"}}"#);
+    assert_eq!(config.smooth_caret_movement, None);
+    assert!(!problems.is_empty());
+}
+
+/// `editor.findInFiles` 读 `sidebar` 和 `dialog`，其他值报告问题并忽略。
+#[test]
+fn find_in_files_reads_its_values() {
+    for (value, expected) in [
+        ("sidebar", SearchStyle::Sidebar),
+        ("dialog", SearchStyle::Dialog),
+    ] {
+        let text = format!(r#"{{"editor":{{"findInFiles":"{value}"}}}}"#);
+        let (config, problems) = Config::parse(&text);
+        assert!(problems.is_empty(), "{value}");
+        assert_eq!(config.find_in_files, Some(expected));
+        assert_eq!(Config::parse(&config.to_json()).0, config);
+    }
+    let (config, problems) = Config::parse(r#"{"editor":{"findInFiles":"popup"}}"#);
+    assert_eq!(config.find_in_files, None);
+    assert!(!problems.is_empty());
+}
+
 #[test]
 fn terminal_application_priority_is_optional_and_round_trips() {
     assert_eq!(Config::default().terminal_application_priority, None);
@@ -317,6 +355,7 @@ fn round_trips_through_json() {
         ui_native_title_bar: Some(true),
         ui_animations: Some(false),
         smooth_scrolling: Some(false),
+        smooth_caret_movement: Some(SmoothCaret::Gliding),
         ui_font_weight: Some(500),
         ui_background_image: Some("/图片/壁纸.jpg".to_string()),
         ui_background_opacity: Some(20.0),
@@ -326,6 +365,9 @@ fn round_trips_through_json() {
         hot_exit: Some(false),
         confirm_close: Some(true),
         restore_folder: Some(false),
+        new_file_on_startup: Some(true),
+        default_language: Some("markdown".to_string()),
+        detect_language_on_paste: Some(false),
         open_folder_in_new_window: Some(true),
         sticky_scroll: Some(false),
         word_wrap: Some(true),
@@ -343,6 +385,8 @@ fn round_trips_through_json() {
         language: Some(LocaleChoice::Fixed(winc_i18n::Locale::EnUs)),
         markdown_remote_images: Some(false),
         markdown_text_width: Some(TextWidth::Wide),
+        markdown_font: Some("LXGW Neo XiHei".to_string()),
+        markdown_size: Some(14.0),
         markdown_line_numbers: Some(false),
         markdown_shortcuts: Some(false),
         markdown_focus: Some(true),
@@ -350,6 +394,7 @@ fn round_trips_through_json() {
         markdown_selection_toolbar: Some(false),
         markdown_image_folder: Some("${filename}.assets".to_string()),
         markdown_image_name: Some("${date}".to_string()),
+        latex_path: Some("/Library/TeX/texbin/latexmk".to_string()),
         update_auto_check: Some(false),
         confirm_drag_and_drop: Some(false),
         compact_folders: Some(false),
@@ -373,6 +418,7 @@ fn round_trips_through_json() {
         terminal_enabled: Some(true),
         terminal_font: Some("Menlo".to_owned()),
         terminal_size: Some(12.0),
+        terminal_font_weight: Some(450),
         terminal_scrollback: Some(5000),
         option_as_meta: Some(OptionAsMeta::Both),
         terminal_minimum_contrast: Some(4.5),
@@ -388,6 +434,7 @@ fn round_trips_through_json() {
         git_enabled: Some(true),
         git_confirm_push: Some(false),
         drop_folder: Some(FolderDrop::Add),
+        find_in_files: Some(SearchStyle::Dialog),
         git_remember_credentials: Some(false),
         system_proxy: Some(false),
         git_inline_blame: Some(false),
@@ -396,6 +443,7 @@ fn round_trips_through_json() {
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
         git_open_worktree: Some(WorktreeOpen::NewWindow),
+        git_pull: Some(PullMode::Rebase),
         git_path: Some("C:\\Tools\\wslgit.exe".to_string()),
         remote_enabled: Some(true),
         remote_local_folders: BTreeMap::from([
@@ -808,4 +856,39 @@ fn open_worktree_reads_its_three_values_and_rejects_others() {
     let (config, problems) = Config::parse(r#"{ "git": { "openWorktree": "tab" } }"#);
     assert_eq!(config.git_open_worktree, None);
     assert_eq!(problems.len(), 1);
+}
+
+#[test]
+fn pull_reads_its_three_values_and_rejects_others() {
+    for (text, expected) in [
+        ("config", PullMode::Config),
+        ("merge", PullMode::Merge),
+        ("rebase", PullMode::Rebase),
+    ] {
+        let json = format!(r#"{{ "git": {{ "pull": "{text}" }} }}"#);
+        let (config, problems) = Config::parse(&json);
+        assert_eq!(config.git_pull, Some(expected));
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let (config, problems) = Config::parse(r#"{ "git": { "pull": "ff" } }"#);
+    assert_eq!(config.git_pull, None);
+    assert_eq!(problems.len(), 1);
+}
+
+#[test]
+fn a_setting_can_be_checked_and_unset_by_name() {
+    let text = r#"{"editor": {"size": 15, "minimap": true}, "theme": "dark"}"#;
+    let (mut config, problems) = Config::parse(text);
+    assert!(problems.is_empty());
+    assert!(config.is_set("editor.size") && config.is_set("editor.minimap"));
+    assert!(config.is_set("theme"));
+    assert!(!config.is_set("editor.wordWrap") && !config.is_set("editor.unknown"));
+    config.unset("editor.size");
+    config.unset("theme");
+    assert_eq!((config.editor_size, config.theme), (None, None));
+    assert_eq!(config.minimap, Some(true));
+    // 写出再读入不改变内容。
+    let mut same = config.clone();
+    same.unset("editor.wordWrap");
+    assert_eq!(same, config);
 }

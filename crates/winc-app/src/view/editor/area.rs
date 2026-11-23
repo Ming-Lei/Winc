@@ -5,6 +5,8 @@
 mod gutter;
 mod line;
 
+pub(in crate::view) use gutter::{blame_ages, draw_blame_cell};
+
 use winc_core::diff::LineHunk;
 use winc_core::text::Columns;
 use winc_core::wrap::Breaks;
@@ -15,6 +17,7 @@ use winc_syntax::{Language, Token};
 
 use super::*;
 use crate::app::FoldMotion;
+use crate::app::animation::CaretTarget;
 use crate::app::git::merge::MergeTarget;
 
 /// 绘制当前文档的文本区，`index` 是它在 `documents` 中的位置。
@@ -95,10 +98,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
     let blame_w = app.blame_width();
     let blame = (blame_w > 0.0).then(|| app.blame_of(id)).flatten();
     // 提交时间的范围：最旧的提交色条最淡，最新的最深。
-    let ages = blame.as_ref().map(|b| {
-        let times = b.commits.iter().filter(|c| !c.uncommitted).map(|c| c.time);
-        (times.clone().min().unwrap_or(0), times.max().unwrap_or(0))
-    });
+    let ages = blame.as_deref().map(gutter::blame_ages);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
@@ -211,6 +211,7 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
             now,
             blame_hover,
             line_blame,
+            problems: app.latex_problem_lines(id),
         };
 
         screen.draw_conflict_tints(frame, &conflicts);
@@ -260,6 +261,22 @@ pub(super) fn draw_text_area(app: &mut App, frame: &mut Frame<'_>, index: usize)
         screen.draw_conflict_markers(frame, &conflicts, &mut merge_hits);
     }
     app.hits.merge = merge_hits;
+
+    // 主光标的移动动画在行都画完之后绘制：滑动途中经过其他行时不会被后面绘制的行盖住。
+    // 前台以外的窗格没有光标，动画状态属于前台的文档。
+    if !app.panes.drawing_background {
+        match scratch.caret {
+            CaretDraw::Sliding(target) => {
+                let rect = app.advance_caret(target);
+                caret_bar(app, frame, rect.x, rect.y, layout.text);
+            }
+            CaretDraw::Static => app.caret_hidden(),
+            // 光标这一帧不在屏幕上，视口正随跳转滚向它：保留动画状态，滚到目标时从原来的位置
+            // 滑过去。用滚轮滚出视野的光标不保留，回来时直接出现。
+            CaretDraw::Offscreen if app.focus == Focus::Editor && app.caret_scrolls() => {}
+            CaretDraw::Offscreen => app.caret_hidden(),
+        }
+    }
 
     app.hits.folded = scratch.folded_hits;
     app.hits.long_lines = scratch.long_hits;
@@ -346,6 +363,8 @@ struct Screen<'a> {
     blame_hover: Option<u32>,
     /// 当前行追溯：光标所在的行和要写在行尾的说明。
     line_blame: Option<(usize, String)>,
+    /// LaTeX 编译出错的行（从 0 起，从小到大）。
+    problems: Vec<usize>,
 }
 
 /// 行尾可点击的区域及其所在的行。
@@ -367,6 +386,20 @@ struct Scratch {
     long_hits: LineHits,
     /// 主光标的位置；输入法候选框跟随该位置。
     ime_cursor: Option<Rect>,
+    /// 主光标这一帧的绘制方式。
+    caret: CaretDraw,
+}
+
+/// 主光标这一帧的绘制方式。
+#[derive(Debug, Clone, Copy, Default)]
+enum CaretDraw {
+    /// 光标这一帧没有画出来：它不在屏幕上，或者编辑区没有焦点。
+    #[default]
+    Offscreen,
+    /// 光标画在目标处，不播放动画。
+    Static,
+    /// 光标播放移动动画，按记录的目标位置推进。
+    Sliding(CaretTarget),
 }
 
 impl Scratch {
@@ -381,6 +414,7 @@ impl Scratch {
             folded_hits: Vec::new(),
             long_hits: Vec::new(),
             ime_cursor: None,
+            caret: CaretDraw::default(),
         }
     }
 }
@@ -646,16 +680,26 @@ impl Screen<'_> {
         let row_y = |line: usize| self.row_y(line);
         let line_y = |line: usize| self.line_y(line);
         let selections = std::iter::once(&self.selection).chain(self.extra);
-        for &selection in selections.chain(&self.yanked) {
-            if selection.is_empty() {
+        // 按住修饰键时鼠标下的链接：下划线。
+        let link = (self.app.pointer.link.as_ref())
+            .filter(|link| (link.doc, link.revision) == (self.doc.id, self.doc.revision))
+            .map(|link| {
+                (
+                    Selection::new(link.from, link.to),
+                    Some(self.app.palette.text),
+                )
+            });
+        let selections = selections.chain(&self.yanked).map(|&s| (s, None));
+        for marked in selections.chain(link) {
+            if marked.0.is_empty() {
                 continue;
             }
             let (app, segments, columns, origin_x) =
                 (self.app, self.segments, self.columns, self.origin_x);
             if self.doc.is_wrapping() {
-                draw_wrapped_selection(app, frame, selection, segments, origin_x, &line_y);
+                draw_wrapped_selection(app, frame, marked, segments, origin_x, &line_y);
             } else {
-                draw_selection(app, frame, selection, segments, columns, origin_x, &row_y);
+                draw_selection(app, frame, marked, segments, columns, origin_x, &row_y);
             }
         }
     }

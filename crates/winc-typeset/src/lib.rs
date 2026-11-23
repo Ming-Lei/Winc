@@ -783,7 +783,9 @@ fn blanks(raw: &Raw) -> Vec<usize> {
 fn reveal(raw: &Raw) -> (Block, Vec<usize>, bool) {
     let text = raw.block.get(raw.leaf.clone()).unwrap_or_default();
     let caret = raw.caret.saturating_sub(raw.leaf.start).min(text.len());
-    let content = text.trim_end().len();
+    // 内容含最后一行末尾的空格，不含其后的空行。
+    let end = text.trim_end().len();
+    let content = end + text[end..].find(['\n', '\r']).unwrap_or(text.len() - end);
     let blanks = blanks(raw);
     let at = (caret <= content).then_some(caret);
     let preedit = raw.preedit.as_deref().filter(|_| at.is_some());
@@ -1003,15 +1005,15 @@ impl Cx<'_, '_> {
     ) {
         let size = self.base;
         let baseline = baseline.unwrap_or_else(|| {
-            let m = self.frame.metrics(FontKind::Ui, size);
+            let m = self.frame.metrics(FontKind::Prose, size);
             y + (size * 1.5 - m.ascent - m.descent) / 2.0 + m.ascent
         });
-        let w = self.frame.measure(FontKind::Ui, size, marker);
+        let w = self.frame.measure(FontKind::Prose, size, marker);
         out.push(Item::Text {
             x: content_x - size * 0.4 - w,
             baseline,
             text: marker.into(),
-            font: FontKind::Ui,
+            font: FontKind::Prose,
             faux: Faux::default(),
             size,
             color,
@@ -1139,7 +1141,7 @@ impl Cx<'_, '_> {
     /// 文字后新段落的位置相同，输入第一个字时内容不移动。
     fn blank_lines(&mut self, blanks: &[usize], x: f32, y: f32, width: f32, out: &mut Out) -> f32 {
         let size = self.base;
-        let m = self.frame.metrics(FontKind::Ui, size);
+        let m = self.frame.metrics(FontKind::Prose, size);
         let row = Row {
             room: width.max(size),
             size,

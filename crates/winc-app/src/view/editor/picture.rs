@@ -25,6 +25,13 @@ const BASE_EDGE: u32 = 1024;
 /// 写到一半解析不了时仍然绘制上一张图，底下一行写出错在哪里；一张都还没绘制出来时只写原因。
 pub(in crate::view) fn draw_split(app: &mut App, frame: &mut Frame<'_>) {
     let area = app.layout.split;
+    // 包括预览左侧的一像素分隔线；预览中的浮动工具栏不能盖住源代码。
+    let clip = Rect::new(area.x - 1.0, area.y, area.w + 1.0, area.h);
+    frame.within(clip, |frame| draw_split_content(app, frame));
+}
+
+fn draw_split_content(app: &mut App, frame: &mut Frame<'_>) {
+    let area = app.layout.split;
     let Some(doc) = app.editor.active().filter(|_| area.w > 0.0) else {
         return;
     };
@@ -35,7 +42,11 @@ pub(in crate::view) fn draw_split(app: &mut App, frame: &mut Frame<'_>) {
     let active = app.split_divider_active();
     let line = if active { p.accent } else { p.border };
     frame.rect(Rect::new(area.x - 1.0, area.y, 1.0, area.h), line);
-    if kind == Some(winc_editor::PreviewKind::Markdown) {
+    if kind == Some(winc_editor::PreviewKind::Latex) {
+        crate::view::preview::latex::draw(app, frame, area);
+        return;
+    }
+    if kind.is_some_and(winc_editor::PreviewKind::typeset) {
         crate::view::preview::markdown::draw(app, frame, area);
         return;
     }

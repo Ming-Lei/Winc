@@ -146,6 +146,17 @@ impl App {
             });
     }
 
+    /// 视口是否正在平滑滚动到当前文档的某一位置（跳转、居中光标）。
+    ///
+    /// 这种滚动由移动光标引起，光标的目标会随之一帧帧移动；光标动画应跟着目标走，而不是把
+    /// 它当成滚轮滚动而直接跳到目标。
+    pub(crate) fn caret_scrolls(&self) -> bool {
+        self.scroll
+            .glide
+            .as_ref()
+            .is_some_and(|glide| self.editor.active().is_some_and(|doc| doc.id == glide.doc))
+    }
+
     /// 结束编辑区的平滑滚动，滚动位置停在此刻屏幕上显示的位置。
     ///
     /// 用于用户直接控制滚动（按下鼠标、滚轮、触摸、拖动滚动条或缩略图）时：此后的命中测试和
@@ -170,6 +181,28 @@ impl App {
         if let Some(before) = before {
             self.glide_scroll(before);
         }
+    }
+
+    /// 把光标所在行滚到编辑区的中间，光标位置不变；光标在折叠的块内时先展开。
+    pub(in crate::app) fn recenter_caret(&mut self) {
+        let before = self.editor.active().map(|d| d.scroll_line);
+        self.reveal_caret();
+        // 先按不可变借用算好目标位置，再写入滚动位置（同 `Self::reveal_caret`）。
+        let visible = self.visible_lines() as f64;
+        let row = self
+            .editor
+            .active()
+            .map_or(0.0, |d| d.row_at(d.selection.head) as f64);
+        let max_scroll = self.max_scroll_line();
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        set_scroll_line(doc, (row + 0.5 - visible / 2.0).clamp(0.0, max_scroll));
+        self.clamp_scroll();
+        if let Some(before) = before {
+            self.glide_scroll(before);
+        }
+        self.request_redraw();
     }
 
     /// 滚动编辑区使光标可见，不做平滑滚动；供 [`Self::ensure_caret_visible`] 调用。

@@ -630,7 +630,7 @@ impl App {
                 if let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) {
                     self.run_args_memory.insert(path, input.clone());
                 }
-                self.run_script(id, &input);
+                self.run_script_with_args(id, &input);
             }
             PromptKind::VimSearch { .. } | PromptKind::VimCommand => {
                 self.vim_prompt_submit(&input);

@@ -143,6 +143,7 @@ impl ApplicationHandler<UserEvent> for App {
                 &self.config.terminal_font,
                 !terminal.is_empty(),
             ),
+            ("markdown.font", &self.config.markdown_font, true),
         ]
         .into_iter()
         .filter(|&(_, _, own)| own)
@@ -166,7 +167,13 @@ impl ApplicationHandler<UserEvent> for App {
                 &ui,
                 &terminal,
                 self.font_weight(),
-            ),
+                self.terminal_font_weight(),
+            )
+            .map(|mut renderer| {
+                let prose = super::appearance::configured_fonts(&self.config.markdown_font);
+                renderer.set_prose_fonts(&prose);
+                renderer
+            }),
         };
         let renderer = match renderer {
             Ok(renderer) => renderer,
@@ -368,6 +375,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.terminal.open {
                     self.update_terminal_link();
                 }
+                self.update_text_link();
                 // 按住 `⌥` 时分支选择器中的「拉取」变为「拉取并变基」，提交按钮变为「提交并推送」。
                 if (self.overlays.picker.open && self.picker_has_actions()) || self.commit_shown() {
                     self.request_redraw();
@@ -450,6 +458,10 @@ impl App {
             UserEvent::RemoteStage => self.remote_stage_changed(),
             UserEvent::RemoteHealth => self.request_redraw(),
             UserEvent::RemoteClosed(target) => self.remote_closed(&target),
+            UserEvent::RemoteShells => {
+                self.relayout();
+                self.request_redraw();
+            }
             UserEvent::ReleaseNotes(notes) => self.show_release_notes(notes),
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
@@ -458,12 +470,14 @@ impl App {
             | UserEvent::GitOperated
             | UserEvent::RemoteConnected
             | UserEvent::RemoteListed
+            | UserEvent::FolderListed
             | UserEvent::RemoteWatching
             | UserEvent::FormatPlanned
             | UserEvent::FileWorked
             | UserEvent::GitMergeSides
             | UserEvent::GitLog
             | UserEvent::GitBlame
+            | UserEvent::Latex
             | UserEvent::Reread
             | UserEvent::TreeScanned
             | UserEvent::Saved
@@ -730,6 +744,10 @@ impl App {
             }
         }
 
+        // 方向键浏览结果的防抖到期时打开最后选中的匹配。
+        earliest(&mut wake, self.poll_browse(now));
+        earliest(&mut wake, self.poll_search_dialog(now));
+
         // 光标闪烁的定时唤醒需要同时满足：窗口有焦点、窗口可见（被完全遮挡时不绘制）、焦点位于
         // 可输入位置、当前文档可以编辑文字（或光标在差异里）、没有进行中的输入法组字；图片预览和
         // 无法打开的文件不显示光标。离上次输入超过 `BLINK_STOP` 后光标停在亮着的状态。
@@ -774,6 +792,8 @@ impl App {
         earliest(&mut wake, self.tab_drag_tick(now));
 
         earliest(&mut wake, self.changes_tick(now));
+
+        earliest(&mut wake, self.git_status_tick(now));
 
         earliest(&mut wake, self.sync_outline(now));
 

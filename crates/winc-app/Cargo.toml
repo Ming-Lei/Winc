@@ -103,5 +103,8 @@ arboard = { workspace = true, features = ["image-data"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 roxmltree.workspace = true
 
+[dev-dependencies]
+winc-backend = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true

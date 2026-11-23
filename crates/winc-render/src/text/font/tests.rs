@@ -167,6 +167,30 @@ fn ascii_comments_take_the_fast_path_without_an_italic() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn the_preview_body_uses_its_own_font_or_the_interface_font() {
+    // 没有单独的预览正文字体：与界面字体相同。
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+    let ui = fonts.resolve(FontKind::Ui, 'a');
+    assert_eq!(fonts.resolve(FontKind::Prose, 'a'), ui);
+    let missing = FontSpec::Path("/nonexistent/font.ttf".into());
+    fonts.set_prose(&[missing]);
+    assert_eq!(fonts.resolve(FontKind::Prose, 'a'), ui);
+
+    // 单独设置后用自己的槽位，缺的字仍从界面字体和后备字体中找；界面字体不变。
+    let monaco = FontSpec::Path("/System/Library/Fonts/Monaco.ttf".into());
+    let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
+    fonts.set_prose(&[monaco]);
+    let (slot, glyph) = fonts.resolve(FontKind::Prose, 'a');
+    assert_eq!(slot, PROSE);
+    assert_ne!(glyph, 0);
+    assert_eq!(fonts.resolve(FontKind::Ui, 'a'), ui);
+    let (slot, glyph) = fonts.resolve(FontKind::Prose, '字');
+    assert_ne!((slot, glyph), (PROSE, 0));
+    assert_ne!(slot, PROSE);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn the_terminal_uses_its_own_font_or_the_editor_font() {
     // 没有单独的终端字体：终端的正体、斜体与编辑区的相同。
     let mut fonts = Fonts::load(&[], &[], &[], 400).expect("系统里有等宽字体");
@@ -190,6 +214,30 @@ fn the_terminal_uses_its_own_font_or_the_editor_font() {
     let missing = FontSpec::Path("/nonexistent/font.ttf".into());
     let mut fonts = Fonts::load(&[], &[], &[missing], 400).expect("系统里有等宽字体");
     assert_eq!(fonts.resolve(FontKind::Terminal, 'a').0, MONO);
+}
+
+#[test]
+fn a_separate_terminal_weight_uses_its_own_fallback_faces() {
+    // 终端字重与全局不同：终端有自己的槽位，后备字体也另开一份；汉字缺字时用终端的那一份。
+    let mut fonts = Fonts::load_with(&[], &[], &[], 400, 300).expect("系统里有等宽字体");
+    assert_eq!(fonts.resolve(FontKind::Terminal, 'a').0, TERMINAL);
+    assert_ne!(fonts.resolve(FontKind::Mono, 'a').0, TERMINAL);
+    assert_eq!(fonts.terminal_fallbacks.len(), fonts.fallbacks.len());
+    let (cjk, _) = fonts.resolve(FontKind::Terminal, '中');
+    assert!(!fonts.fallbacks.contains(&cjk), "{cjk}");
+    // 缺字时的顺序同字重相同时：终端没有单独的字体列表时只多出界面字体一项，不列平台的其他
+    // 候选字体。
+    assert!(fonts.listed[2].len() <= 1, "{:?}", fonts.listed[2]);
+    // 彩色 emoji 没有字重，终端与其余文字共用一个槽位。
+    assert!(fonts.terminal_fallbacks.contains(&fonts.emoji));
+    let (slot, _) = fonts.resolve(FontKind::Terminal, '😀');
+    let (shared, _) = fonts.resolve(FontKind::Mono, '😀');
+    assert_eq!(slot, shared);
+
+    // 与全局字重相同：和编辑区共用字体，不重复加载后备字体。
+    let mut fonts = Fonts::load_with(&[], &[], &[], 400, 400).expect("系统里有等宽字体");
+    assert_eq!(fonts.resolve(FontKind::Terminal, 'a').0, MONO);
+    assert!(fonts.terminal_fallbacks.is_empty());
 }
 
 #[test]

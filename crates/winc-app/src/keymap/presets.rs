@@ -129,7 +129,13 @@ pub(super) const COMMON: &[PresetRow] = &[
         &["cmd+end"],
         &["ctrl+shift+end"],
     ),
-    row(Copy, Terminal, &["cmd+c"], &["ctrl+shift+c"]),
+    // 单按 Ctrl 的 `ctrl+c` 只在有选区时复制（见 `App::lookup_shortcut`）。
+    row(
+        TerminalCopy,
+        Terminal,
+        &["cmd+c"],
+        &["ctrl+c", "ctrl+shift+c", "ctrl+insert"],
+    ),
     row(SelectAll, Terminal, &["cmd+a"], &["ctrl+shift+a"]),
     row(NextTerminal, Terminal, &["shift+cmd+]"], &["ctrl+shift+]"]),
     row(
@@ -176,7 +182,12 @@ pub(super) const COMMON: &[PresetRow] = &[
         &["alt+enter"],
     ),
     row(ClearTerminal, Terminal, &["cmd+k"], &["ctrl+shift+k"]),
-    row(Paste, Terminal, &[], &["ctrl+shift+v"]),
+    row(
+        TerminalPaste,
+        Terminal,
+        &["cmd+v"],
+        &["ctrl+v", "ctrl+shift+v", "shift+insert"],
+    ),
     // Markdown 的写作命令：两套方案都按专门的 Markdown 编辑器的默认键。
     row(MarkdownHeading1, Markdown, &["cmd+1"], &["ctrl+1"]),
     row(MarkdownHeading2, Markdown, &["cmd+2"], &["ctrl+2"]),
@@ -223,7 +234,21 @@ pub(super) const COMMON: &[PresetRow] = &[
 ];
 
 /// 共用的键在 Linux 上与 Windows 不同的部分。
-pub(super) const COMMON_LINUX: &[PresetRow] = &[];
+pub(super) const COMMON_LINUX: &[PresetRow] = &[
+    // 单按 Ctrl 的 `ctrl+c`、`ctrl+v` 留给终端里的程序。
+    row(
+        TerminalCopy,
+        Terminal,
+        &[],
+        &["ctrl+shift+c", "ctrl+insert"],
+    ),
+    row(
+        TerminalPaste,
+        Terminal,
+        &[],
+        &["ctrl+shift+v", "shift+insert"],
+    ),
+];
 
 /// IDEA 方案。
 pub(super) const IDEA: &[PresetRow] = &[
@@ -427,6 +452,9 @@ pub(super) const IDEA: &[PresetRow] = &[
     row(GitShowChanges, Global, &["cmd+0"], &["alt+0"]),
     row(ShowCommit, Global, &["cmd+k"], &["ctrl+k"]),
     row(GitShowLog, Global, &["cmd+9"], &["alt+9"]),
+    row(GitRewordCommit, Editor, &["f2"], &["f2"]),
+    row(GitGoToChildCommit, Editor, &["left"], &["left"]),
+    row(GitGoToParentCommit, Editor, &["right"], &["right"]),
     row(GitPull, Global, &["cmd+t"], &["ctrl+t"]),
     row(GitPush, Global, &["shift+cmd+k"], &["ctrl+shift+k"]),
     row(ToggleTerminal, Everywhere, &["alt+f12"], &["alt+f12"]),
@@ -447,6 +475,15 @@ pub(super) const IDEA: &[PresetRow] = &[
     row(ZoomIn, Everywhere, &["ctrl+alt+="], &["shift+alt+="]),
     row(ZoomOut, Everywhere, &["ctrl+alt+-"], &["shift+alt+-"]),
     row(ResetZoom, Everywhere, &["ctrl+alt+0"], &["shift+alt+0"]),
+    // macOS 上与系统文本框相同的 `⌃` 字母键，IDEA 占作其他功能的（`⌃D` `⌃H` `⌃T` `⌃O`）不绑定。
+    row(CursorHome, Editor, &["ctrl+a"], &[]),
+    row(CursorEnd, Editor, &["ctrl+e"], &[]),
+    row(CursorLeft, Editor, &["ctrl+b"], &[]),
+    row(CursorRight, Editor, &["ctrl+f"], &[]),
+    row(CursorUp, Editor, &["ctrl+p"], &[]),
+    row(CursorDown, Editor, &["ctrl+n"], &[]),
+    row(CutToLineEnd, Editor, &["ctrl+k"], &[]),
+    row(ScrollToCenter, Editor, &["ctrl+l"], &[]),
 ];
 
 /// IDEA 方案在 Linux 上与 Windows 不同的键。
@@ -717,8 +754,14 @@ pub(super) const VSCODE: &[PresetRow] = &[
     row(FocusSidebar, Global, &["cmd+0"], &["ctrl+0"]),
     row(ShowFiles, Global, &["shift+cmd+e"], &["ctrl+shift+e"]),
     row(ShowCommit, Global, &["ctrl+shift+g"], &["ctrl+shift+g"]),
+    // VS Code 没有这个命令；它的 F2 是重命名，编辑提交说明与之相当。
+    row(GitRewordCommit, Editor, &["f2"], &["f2"]),
+    // VS Code 没有提交日志，转到子提交、父提交与 IDEA 相同。
+    row(GitGoToChildCommit, Editor, &["left"], &["left"]),
+    row(GitGoToParentCommit, Editor, &["right"], &["right"]),
     row(ToggleTerminal, Everywhere, &["ctrl+`"], &["ctrl+`"]),
-    row(ToggleTerminalPanel, Global, &["cmd+j"], &["ctrl+j"]),
+    // 焦点在终端里也开关面板，与 VS Code 相同；终端应用优先时 Ctrl+J 交给程序（换行）。
+    row(ToggleTerminalPanel, Everywhere, &["cmd+j"], &["ctrl+j"]),
     row(StopConfiguration, Global, &["shift+f5"], &["shift+f5"]),
     row(CopyPath, Global, &[], &["shift+alt+c"]),
     row(CopyRelativePath, Global, &[], &["ctrl+k ctrl+shift+c"]),
@@ -737,6 +780,18 @@ pub(super) const VSCODE: &[PresetRow] = &[
     ),
     row(ResetZoom, Everywhere, &["cmd+numpad0"], &["ctrl+numpad0"]),
     row(RunConfiguration, Global, &["ctrl+f5"], &["ctrl+f5"]),
+    // macOS 上与系统文本框相同的 `⌃` 字母键。
+    row(CursorLineStart, Editor, &["ctrl+a", "ctrl+shift+a"], &[]),
+    row(CursorLineEnd, Editor, &["ctrl+e", "ctrl+shift+e"], &[]),
+    row(CursorLeft, Editor, &["ctrl+b"], &[]),
+    row(CursorRight, Editor, &["ctrl+f"], &[]),
+    row(CursorUp, Editor, &["ctrl+p"], &[]),
+    row(CursorDown, Editor, &["ctrl+n"], &[]),
+    row(DeleteLeft, Editor, &["ctrl+h"], &[]),
+    row(DeleteRight, Editor, &["ctrl+d"], &[]),
+    row(DeleteAllRight, Editor, &["ctrl+k"], &[]),
+    row(TransposeLetters, Editor, &["ctrl+t"], &[]),
+    row(InsertLineBreak, Editor, &["ctrl+o"], &[]),
 ];
 
 /// VS Code 方案在 Linux 上与 Windows 不同的键。

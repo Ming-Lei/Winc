@@ -131,6 +131,48 @@ fn the_full_preview_edits_the_document() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：只看预览时文件被其他程序改写，整个重新读入之后预览仍可直接编辑，左侧仍写原文行号。
+#[test]
+fn the_full_preview_stays_editable_after_the_file_changes_on_disk() {
+    let (mut app, dir) = live_doc("md-live-reload", "# 标题\n\n第一段\n");
+    assert!(app.markdown_live());
+
+    // 改的不只是末尾，整个重新读入；文件变长了，修改时间相同也能检测到变化。
+    let changed = "# 标题\n\n改过的第一段\n\n第二段\n";
+    std::fs::write(dir.join("LIVE.md"), changed).unwrap();
+    app.sync_documents(|_| true);
+    settle(&mut app);
+    assert_eq!(doc_text(&app), changed);
+    assert!(app.markdown_live());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 只看预览的 Markdown 关掉后再打开：光标回到原来的那一段，预览滚到那里。
+#[test]
+fn the_full_preview_reopens_at_the_caret() {
+    let text: String = (0..80).map(|i| format!("第 {i} 段\n\n")).collect();
+    let (mut app, dir) = live_doc("md-live-place", &text);
+    app.go_to(120, 2, 0);
+    settle(&mut app);
+    let scroll = app.preview.markdown.scroll();
+    assert!(scroll > 0.0);
+    app.remember_session();
+
+    let mut next = blank_app(false);
+    next.state = app.state.clone();
+    next.open_path(&dir.join("LIVE.md"));
+    paint(&mut next);
+    next.set_preview_mode(PreviewMode::Preview);
+    settle(&mut next);
+    assert!(next.markdown_live());
+    let doc = next.editor.active().unwrap();
+    assert_eq!(doc.text().pos_to_line_col(doc.selection.head), (120, 2));
+    let reopened = next.preview.markdown.scroll();
+    assert!(reopened > 0.0, "预览停在开头");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_caret_paragraph_keeps_its_look() {
     use crate::app::preview::markdown::laid::full_text;
@@ -737,4 +779,59 @@ fn task_items_can_be_typed() {
         assert!(shown.contains("前文\n任务\n后文"), "{shown}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+#[test]
+fn trailing_spaces_stay_in_their_own_item() {
+    use crate::app::preview::markdown::laid::full_text;
+
+    let (mut app, dir) = live_doc("md-trailing", "1. 一 \n2. 二\n");
+    // 光标在行尾空格之后：只有这一项显示原文，空格可见。
+    put_caret(&mut app, "一 ", true);
+    let shown = full_text(&app).unwrap();
+    assert!(shown.starts_with("一 \n二"), "{shown:?}");
+    // 在最后一项末尾输入的空格立即可见，光标随之后移。
+    put_caret(&mut app, "二", true);
+    let x = |app: &App| {
+        let laid = app.preview.markdown.layout.as_ref().unwrap();
+        laid.caret_point(app.live_caret_source().unwrap())
+            .unwrap()
+            .0
+    };
+    let before = x(&app);
+    app.run(winc_editor::Command::Insert(" ".into()));
+    settle(&mut app);
+    let shown = full_text(&app).unwrap();
+    assert!(shown.contains("二 "), "{shown:?}");
+    assert!(x(&app) > before + 1.0);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn shift_enter_breaks_the_line_inside_the_paragraph() {
+    use crate::app::preview::markdown::laid::full_text;
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+
+    let (mut app, dir) = live_doc("md-break", "甲\n\n丙\n");
+    put_caret(&mut app, "甲", true);
+    app.pointer.modifiers = ModifiersState::SHIFT;
+    assert!(app.markdown_key(&Key::Named(NamedKey::Enter), false));
+    app.pointer.modifiers = ModifiersState::empty();
+    app.run(winc_editor::Command::Insert("乙".into()));
+    settle(&mut app);
+    assert_eq!(doc_text(&app), "甲\n乙\n\n丙\n");
+    assert!(full_text(&app).unwrap().contains("甲\n乙"));
+    // 段内换行紧凑，段落之间留出段距。
+    let y = |app: &mut App, needle| {
+        put_caret(app, needle, false);
+        caret_screen_y(app)
+    };
+    let (first, second, next) = (y(&mut app, "甲"), y(&mut app, "乙"), y(&mut app, "丙"));
+    assert!(
+        next - second > second - first + 5.0,
+        "{first} {second} {next}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

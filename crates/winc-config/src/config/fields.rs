@@ -44,12 +44,29 @@ macro_rules! string_field {
     };
 }
 
+/// 字重设置：范围见 [`Config::FONT_WEIGHT_RANGE`]，读出时取整。
+macro_rules! weight_field {
+    ($field:ident) => {
+        Field {
+            key: "fontWeight",
+            read: |config, value, name, problems| {
+                let label = t!("config-label-font-weight");
+                let range = Config::FONT_WEIGHT_RANGE;
+                config.$field =
+                    read_number(value, name, range, label, problems).map(|w| w.round() as u16);
+            },
+            write: |config| config.$field.map(|weight| number(f32::from(weight))),
+        }
+    };
+}
+
 /// 配置文件中的各节（顶层值为对象的键）和其中的设置，按写出的顺序排列。
 pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("editor", EDITOR),
     ("ui", UI),
     ("tree", TREE),
     ("markdown", MARKDOWN),
+    ("latex", LATEX),
     ("update", UPDATE),
     ("terminal", TERMINAL),
     ("vim", VIM),
@@ -154,6 +171,9 @@ const EDITOR: &[Field] = &[
     bool_field!("hotExit", hot_exit),
     bool_field!("confirmClose", confirm_close),
     bool_field!("restoreFolder", restore_folder),
+    bool_field!("newFileOnStartup", new_file_on_startup),
+    string_field!("defaultLanguage", default_language),
+    bool_field!("detectLanguageOnPaste", detect_language_on_paste),
     bool_field!("openFolderInNewWindow", open_folder_in_new_window),
     Field {
         key: "dropFolder",
@@ -177,11 +197,45 @@ const EDITOR: &[Field] = &[
             Some(Json::String(value.into()))
         },
     },
+    Field {
+        key: "findInFiles",
+        read: |config, value, name, problems| {
+            config.find_in_files = match value.as_str() {
+                Some("sidebar") => Some(SearchStyle::Sidebar),
+                Some("dialog") => Some(SearchStyle::Dialog),
+                _ => {
+                    problems.push(t!("config-find-in-files-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.find_in_files? {
+                SearchStyle::Sidebar => "sidebar",
+                SearchStyle::Dialog => "dialog",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
     bool_field!("stickyScroll", sticky_scroll),
     bool_field!("wordWrap", word_wrap),
     bool_field!("wholeLines", whole_lines),
     bool_field!("minimap", minimap),
     bool_field!("smoothScrolling", smooth_scrolling),
+    Field {
+        key: "smoothCaretMovement",
+        read: |config, value, name, problems| {
+            config.smooth_caret_movement = value.as_str().and_then(SmoothCaret::from_value);
+            if config.smooth_caret_movement.is_none() {
+                problems.push(t!("config-smooth-caret-invalid", name = name));
+            }
+        },
+        write: |config| {
+            config
+                .smooth_caret_movement
+                .map(|choice| Json::String(choice.as_str().into()))
+        },
+    },
     bool_field!("outline", outline),
     Field {
         key: "renderWhitespace",
@@ -234,20 +288,7 @@ const UI: &[Field] = &[
         },
         write: |config| config.ui_zoom.map(|zoom| number(f32::from(zoom))),
     },
-    Field {
-        key: "fontWeight",
-        read: |config, value, name, problems| {
-            let label = t!("config-label-font-weight");
-            let range = Config::FONT_WEIGHT_RANGE;
-            config.ui_font_weight =
-                read_number(value, name, range, label, problems).map(|w| w.round() as u16);
-        },
-        write: |config| {
-            config
-                .ui_font_weight
-                .map(|weight| number(f32::from(weight)))
-        },
-    },
+    weight_field!(ui_font_weight),
     string_field!("backgroundImage", ui_background_image),
     Field {
         key: "backgroundOpacity",
@@ -309,6 +350,16 @@ const TREE: &[Field] = &[
 /// `markdown` 一节。
 const MARKDOWN: &[Field] = &[
     bool_field!("remoteImages", markdown_remote_images),
+    string_field!("font", markdown_font),
+    Field {
+        key: "size",
+        read: |config, value, name, problems| {
+            let label = t!("config-label-font-size");
+            config.markdown_size =
+                read_number(value, name, Config::EDITOR_SIZE_RANGE, label, problems)
+        },
+        write: |config| config.markdown_size.map(number),
+    },
     bool_field!("lineNumbers", markdown_line_numbers),
     bool_field!("shortcuts", markdown_shortcuts),
     bool_field!("focusMode", markdown_focus),
@@ -339,6 +390,9 @@ const MARKDOWN: &[Field] = &[
         },
     },
 ];
+
+/// `latex` 一节。
+const LATEX: &[Field] = &[string_field!("path", latex_path)];
 
 /// `update` 一节。
 const UPDATE: &[Field] = &[bool_field!("autoCheck", update_auto_check)];
@@ -557,6 +611,7 @@ const TERMINAL: &[Field] = &[
         },
         write: |config| config.terminal_size.map(number),
     },
+    weight_field!(terminal_font_weight),
     string_field!("shell", terminal_shell),
     bool_field!("shellIntegration", terminal_shell_integration),
     bool_field!("confirmClose", terminal_confirm_close),
@@ -669,6 +724,28 @@ const GIT: &[Field] = &[
                 WorktreeOpen::Ask => "ask",
                 WorktreeOpen::NewWindow => "newWindow",
                 WorktreeOpen::CurrentWindow => "currentWindow",
+            };
+            Some(Json::String(value.into()))
+        },
+    },
+    Field {
+        key: "pull",
+        read: |config, value, name, problems| {
+            config.git_pull = match value.as_str() {
+                Some("config") => Some(PullMode::Config),
+                Some("merge") => Some(PullMode::Merge),
+                Some("rebase") => Some(PullMode::Rebase),
+                _ => {
+                    problems.push(t!("config-pull-invalid", name = name));
+                    None
+                }
+            };
+        },
+        write: |config| {
+            let value = match config.git_pull? {
+                PullMode::Config => "config",
+                PullMode::Merge => "merge",
+                PullMode::Rebase => "rebase",
             };
             Some(Json::String(value.into()))
         },
@@ -902,6 +979,17 @@ pub(super) const RUN: &[Field] = &[Field {
 /// 在 `fields` 中找键名为 `key` 的一项。
 pub(super) fn find<'a>(fields: &'a [Field], key: &str) -> Option<&'a Field> {
     fields.iter().find(|field| field.key == key)
+}
+
+/// 返回名为 `name` 的设置：节名加键名（如 `editor.size`），或顶层的键（如 `theme`）。
+pub(super) fn named(name: &str) -> Option<&'static Field> {
+    match name.split_once('.') {
+        Some((section, key)) => {
+            let fields = SECTIONS.iter().find(|&&(name, _)| name == section)?.1;
+            find(fields, key)
+        }
+        None => find(TOP_LEVEL, name),
+    }
 }
 
 /// 顶层的 `key` 是否是认识的设置：[`SECTIONS`] 中某一节的名字，或 [`TOP_LEVEL`] 中的一项。

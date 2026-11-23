@@ -32,7 +32,7 @@ use memchr::{memchr_iter, memchr2_iter};
 use ropey::Rope;
 use winc_core::Lines;
 
-use crate::document::encoding::{UTF8_BOM, decode, utf16_text};
+use crate::document::encoding::{UTF8_BOM, decode, unicode_escapes_view, utf16_text};
 use crate::document::large::{LINE_CAP, visible_len};
 use crate::document::{BINARY_SNIFF, Document, DocumentId, LARGE_FILE, OPEN_LIMIT, looks_binary};
 use crate::editing::search::{Matcher, Options, Pattern, Search, count_chars, joined, unescape};

@@ -220,13 +220,17 @@ pub(crate) fn restore_tabs(
         }
     }
 
-    // 当时的当前标签已不存在时，改为最后一个标签（它可能还没读）。
-    editor.active = active
-        .and_then(|id| editor.index_of(id))
-        .or(editor.documents.len().checked_sub(1));
     if let Some(panes) = session.and_then(|s| s.panes.as_ref()) {
         restore_panes(editor, panes, &opened);
     }
+    // 当时的当前标签不在前台窗格里时沿用已有的当前标签，都没有时改为最后一个标签。
+    let tabs = editor.tab_count();
+    let shown = |at: &usize| *at < tabs;
+    editor.active = active
+        .and_then(|id| editor.index_of(id))
+        .filter(shown)
+        .or(editor.active.filter(shown))
+        .or(tabs.checked_sub(1));
     let current = editor.active().and_then(|d| d.path.clone());
     if let (Some(file), Some(workspace)) = (current, &mut editor.workspace) {
         workspace.reveal(&file);
@@ -235,13 +239,18 @@ pub(crate) fn restore_tabs(
 }
 
 /// 启动时恢复上次的现场：同 [`restore_tabs`]，并立即读取当前标签，使第一帧即显示其内容。
+///
+/// 当前标签是大文件时不读，留给窗口在后台读取（见 [`App::load_at_launch`]）。
 pub(crate) fn restore_at_launch(
     editor: &mut Editor,
     session: Option<&Session>,
     root: Option<&Path>,
 ) -> Restored {
     let restored = restore_tabs(editor, session, root);
-    editor.load_active();
+    let path = editor.active().and_then(|d| d.path.as_deref());
+    if !path.is_some_and(winc_editor::opens_as_large) {
+        editor.load_active();
+    }
     restored
 }
 

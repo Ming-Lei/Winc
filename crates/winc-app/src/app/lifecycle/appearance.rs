@@ -74,9 +74,16 @@ impl App {
         [editor, configured_fonts(&self.config.ui_font), terminal]
     }
 
-    /// 返回全部文字的字重（`ui.fontWeight`），未配置时为 400。
+    /// 返回界面和编辑区文字的字重（`ui.fontWeight`），未配置时为 400。
     pub(in crate::app) fn font_weight(&self) -> u16 {
         self.config.ui_font_weight.unwrap_or(Config::FONT_WEIGHT)
+    }
+
+    /// 返回终端文字的字重（`terminal.fontWeight`）；没有调整过时同全局字重。
+    pub(in crate::app) fn terminal_font_weight(&self) -> u16 {
+        self.config
+            .terminal_font_weight
+            .unwrap_or_else(|| self.font_weight())
     }
 
     /// 应用主题选择：`Auto` 交由系统决定，`Dark`、`Light` 固定为指定外观。
@@ -139,12 +146,21 @@ impl App {
     pub(in crate::app) fn apply_fonts(&mut self) -> Result<(), String> {
         let [mono, ui, terminal] = self.font_specs();
         let weight = self.font_weight();
+        let terminal_weight = self.terminal_font_weight();
 
-        if let Some(renderer) = &mut self.frame.renderer
-            && renderer.set_fonts(&mono, &ui, &terminal, weight).is_err()
-        {
-            return Err(winc_i18n::t!("workspace-font-unusable").to_owned());
+        let prose = configured_fonts(&self.config.markdown_font);
+        if let Some(renderer) = &mut self.frame.renderer {
+            if renderer
+                .set_fonts(&mono, &ui, &terminal, weight, terminal_weight)
+                .is_err()
+            {
+                return Err(winc_i18n::t!("workspace-font-unusable").to_owned());
+            }
+            renderer.set_prose_fonts(&prose);
         }
+        // 预览的排版和测量结果按旧字体算出，全部重排。
+        self.preview.markdown.layout = None;
+        self.preview.markdown.memo = Default::default();
 
         self.apply_font_sizes();
         Ok(())

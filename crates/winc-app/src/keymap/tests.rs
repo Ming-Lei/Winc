@@ -51,6 +51,50 @@ fn terminal_switching_uses_one_key_set_and_leaves_program_paging() {
 }
 
 #[test]
+fn terminal_clipboard_keys_follow_each_system() {
+    use Action::{TerminalCopy, TerminalPaste};
+    let (ctrl, shift) = (Mods::CTRL, Mods::SHIFT);
+    let (c, v) = (KeyCode::Char('c'), KeyCode::Char('v'));
+    let shared = [
+        (ctrl | shift, c, TerminalCopy),
+        (ctrl, KeyCode::Insert, TerminalCopy),
+        (ctrl | shift, v, TerminalPaste),
+        (shift, KeyCode::Insert, TerminalPaste),
+    ];
+    for os in [Os::Windows, Os::Linux] {
+        for (mods, key, action) in shared {
+            assert_eq!(
+                runs(os, mods, key, Context::Terminal),
+                Some(action),
+                "{os:?}"
+            );
+        }
+        // 编辑区的复制、粘贴不变。
+        assert_eq!(runs(os, ctrl, v, Context::Editor), Some(Action::Paste));
+    }
+    // Windows 上单按 Ctrl 的 C、V 也是复制、粘贴；Linux 上留给程序。
+    assert_eq!(
+        runs(Os::Windows, ctrl, c, Context::Terminal),
+        Some(TerminalCopy)
+    );
+    assert_eq!(
+        runs(Os::Windows, ctrl, v, Context::Terminal),
+        Some(TerminalPaste)
+    );
+    for key in [c, v] {
+        assert_eq!(press(Os::Linux, ctrl, key, Context::Terminal), Lookup::None);
+    }
+    assert_eq!(
+        runs(Os::Mac, Mods::META, c, Context::Terminal),
+        Some(TerminalCopy)
+    );
+    assert_eq!(
+        runs(Os::Mac, Mods::META, v, Context::Terminal),
+        Some(TerminalPaste)
+    );
+}
+
+#[test]
 fn filtered_bindings_do_not_reserve_a_chord_prefix() {
     let first = Stroke {
         key: KeyCode::Char('k'),
@@ -268,21 +312,19 @@ fn vscode_key_labels_per_system() {
         }
     }
 
-    // ⌘J 显示或隐藏面板，在终端里也生效；其他系统上 Ctrl+J 在终端里是 shell 的换行。
+    // ⌘J（其他系统上 Ctrl+J）显示或隐藏面板，焦点在终端里也生效，与 VS Code 相同。
     for context in [Context::Editor, Context::Terminal] {
         assert_eq!(
             runs(Os::Mac, Mods::META, KeyCode::Char('j'), context),
             Some(Action::ToggleTerminalPanel)
         );
+        for os in [Os::Windows, Os::Linux] {
+            assert_eq!(
+                runs(os, Mods::CTRL, KeyCode::Char('j'), context),
+                Some(Action::ToggleTerminalPanel)
+            );
+        }
     }
-    assert_eq!(
-        runs(Os::Linux, Mods::CTRL, KeyCode::Char('j'), Context::Editor),
-        Some(Action::ToggleTerminalPanel)
-    );
-    assert_eq!(
-        runs(Os::Linux, Mods::CTRL, KeyCode::Char('j'), Context::Terminal),
-        None
-    );
 
     // ⌃R（其他系统上 Ctrl+R）打开最近的项目；终端里交给 shell，用于反向搜索历史。
     for os in ALL_OS {
@@ -499,6 +541,12 @@ fn edits_in_diff_matches_the_diff_command_list() {
         ToggleComment,
         DeleteLine,
         DeleteAllLeft,
+        CursorLineStart,
+        CursorLineEnd,
+        DeleteAllRight,
+        CutToLineEnd,
+        TransposeLetters,
+        InsertLineBreak,
         IndentLines,
         OutdentLines,
         MoveLinesUp,
@@ -529,6 +577,8 @@ fn edits_in_diff_matches_the_diff_command_list() {
         SortLinesAscending,
         SortLinesDescending,
         TrimTrailingWhitespace,
+        UnescapeUnicode,
+        EscapeUnicode,
         Format,
         FormatSelection,
         Fix,
@@ -808,4 +858,67 @@ fn custom_keys_replace_the_preset_and_take_the_key() {
         assert_eq!(Action::from_id(&action.id()), Some(*action));
         assert!(!ACTIONS[i + 1..].iter().any(|a| a.id() == action.id()));
     }
+}
+
+/// macOS 上两套方案按各自编辑器的默认键位绑定 `⌃` 字母键：IDEA 占作其他功能的键不绑定，查找条
+/// 等输入框里不生效，其他系统不绑定。
+#[test]
+fn control_letters_follow_each_editor_on_macos() {
+    use Action::*;
+    use Preset::{Idea, VsCode};
+    let run = |preset: Preset, mods: Mods, c: char, context: Context| {
+        let stroke = Stroke {
+            key: KeyCode::Char(c),
+            mods,
+        };
+        match lookup(&preset.bindings(Os::Mac), stroke, None, context) {
+            Lookup::Run(actions) => actions.first().copied(),
+            _ => None,
+        }
+    };
+    let ctrl = Mods::CTRL;
+    for (c, vscode, idea) in [
+        ('a', Some(CursorLineStart), Some(CursorHome)),
+        ('e', Some(CursorLineEnd), Some(CursorEnd)),
+        ('f', Some(CursorRight), Some(CursorRight)),
+        ('b', Some(CursorLeft), Some(CursorLeft)),
+        ('n', Some(CursorDown), Some(CursorDown)),
+        ('p', Some(CursorUp), Some(CursorUp)),
+        ('d', Some(DeleteRight), None),
+        ('h', Some(DeleteLeft), None),
+        ('k', Some(DeleteAllRight), Some(CutToLineEnd)),
+        ('t', Some(TransposeLetters), None),
+        ('o', Some(InsertLineBreak), None),
+        ('l', None, Some(ScrollToCenter)),
+    ] {
+        assert_eq!(
+            run(VsCode, ctrl, c, Context::Editor),
+            vscode,
+            "VS Code ⌃{c}"
+        );
+        assert_eq!(run(Idea, ctrl, c, Context::Editor), idea, "IDEA ⌃{c}");
+        assert_eq!(
+            run(VsCode, ctrl, c, Context::Markdown),
+            vscode,
+            "Markdown ⌃{c}"
+        );
+        assert_eq!(run(VsCode, ctrl, c, Context::Find), None, "查找条 ⌃{c}");
+    }
+    assert_eq!(
+        run(VsCode, ctrl | Mods::SHIFT, 'a', Context::Editor),
+        Some(CursorLineStart)
+    );
+    let windows = Stroke {
+        key: KeyCode::Char('a'),
+        mods: ctrl,
+    };
+    assert_eq!(
+        lookup(
+            &VsCode.bindings(Os::Windows),
+            windows,
+            None,
+            Context::Editor
+        ),
+        Lookup::Run(vec![SelectAll])
+    );
 }

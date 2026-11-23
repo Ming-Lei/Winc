@@ -307,29 +307,38 @@ impl App {
             | Setting::RenderWhitespace
             | Setting::VimClipboard
             | Setting::GitOpenWorktree
+            | Setting::GitPullMode
             | Setting::DropFolder
+            | Setting::FindInFiles
             | Setting::AutoSave
+            | Setting::SmoothCaret
             | Setting::Zoom
             | Setting::BackgroundImage
             | Setting::BackgroundFit
             | Setting::TextWidth
+            | Setting::DefaultLanguage
             | Setting::TerminalPosition
             | Setting::TerminalTabPosition
             | Setting::TerminalOptionAsMeta
             | Setting::UiFont
             | Setting::EditorFont
-            | Setting::TerminalFont => {
+            | Setting::TerminalFont
+            | Setting::MarkdownFont => {
                 let target = match setting {
                     Setting::Language => MenuTarget::Locale,
                     Setting::RenderWhitespace => MenuTarget::Whitespace,
                     Setting::VimClipboard => MenuTarget::VimClipboard,
                     Setting::GitOpenWorktree => MenuTarget::OpenWorktree,
+                    Setting::GitPullMode => MenuTarget::PullMode,
                     Setting::DropFolder => MenuTarget::DropFolder,
+                    Setting::FindInFiles => MenuTarget::SearchStyle,
                     Setting::AutoSave => MenuTarget::AutoSave,
+                    Setting::SmoothCaret => MenuTarget::SmoothCaret,
                     Setting::Zoom => MenuTarget::Zoom,
                     Setting::BackgroundImage => MenuTarget::BackgroundImage,
                     Setting::BackgroundFit => MenuTarget::BackgroundFit,
                     Setting::TextWidth => MenuTarget::TextWidth,
+                    Setting::DefaultLanguage => MenuTarget::DefaultLanguage,
                     Setting::TerminalPosition => MenuTarget::TerminalPosition,
                     Setting::TerminalTabPosition => MenuTarget::TerminalTabPosition,
                     Setting::TerminalOptionAsMeta => MenuTarget::OptionAsMeta,
@@ -343,7 +352,7 @@ impl App {
             Setting::FixCommand(id) => (MenuTarget::Tool(Task::Fix, id), row.control),
             Setting::ScriptCommand(id) => (MenuTarget::Script(id), row.control),
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
-            Setting::GitPath => return self.settings_start_editing(setting),
+            Setting::GitPath | Setting::LatexPath => return self.settings_start_editing(setting),
             Setting::Updates => return self.settings_check_updates(),
             _ => return,
         };

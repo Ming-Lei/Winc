@@ -31,6 +31,12 @@ impl App {
             MenuTarget::Tree(path) => self.run_tree_command(command, path),
             MenuTarget::Tab(id) => self.run_tab_command(command, id),
             MenuTarget::CommitFile(path) => self.run_commit_file_command(command, path),
+            // 提交上的分支子菜单：分支按弹出菜单时的列表解释。
+            MenuTarget::LogCommit(_) if let MenuCommand::GitBranch(op, i) = command => {
+                if let Some(branch) = menu.branches.get(i).cloned() {
+                    self.run_branch_op(op, branch);
+                }
+            }
             MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid),
             MenuTarget::LogFile(i, path) => self.run_log_file_command(command, i, path),
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
@@ -139,6 +145,12 @@ impl App {
                     _ => {}
                 }
             }
+            // 「逐行追溯」同时开关两侧。
+            MenuTarget::DiffGutter(id) => {
+                if self.editor.active().map(|d| d.id) == Some(id) {
+                    self.toggle_diff_blame();
+                }
+            }
             // 和快捷键走同一条路：光标在右侧时由右侧的文档执行，只读的一侧有选区时复制这一侧。
             MenuTarget::Diff(id, _) => {
                 if self.editor.active().map(|d| d.id) == Some(id)
@@ -206,6 +218,15 @@ impl App {
                     self.set_render_whitespace(choice);
                 }
             }
+            MenuTarget::SearchStyle => {
+                if let MenuCommand::SearchStyle(i) = command
+                    && let Some(&choice) = winc_config::SearchStyle::ALL.get(i)
+                {
+                    self.config.find_in_files = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
             MenuTarget::DropFolder => {
                 if let MenuCommand::DropFolder(i) = command
                     && let Some(&choice) = winc_config::FolderDrop::ALL.get(i)
@@ -220,11 +241,25 @@ impl App {
                     self.set_auto_save(choice);
                 }
             }
+            MenuTarget::SmoothCaret => {
+                if let MenuCommand::SmoothCaret(i) = command
+                    && let Some(&choice) = winc_config::SmoothCaret::ALL.get(i)
+                {
+                    self.set_smooth_caret(choice);
+                }
+            }
             MenuTarget::OpenWorktree => {
                 if let MenuCommand::OpenWorktree(i) = command
                     && let Some(&choice) = winc_config::WorktreeOpen::ALL.get(i)
                 {
                     self.set_open_worktree(choice);
+                }
+            }
+            MenuTarget::PullMode => {
+                if let MenuCommand::PullMode(i) = command
+                    && let Some(&choice) = winc_config::PullMode::ALL.get(i)
+                {
+                    self.set_pull_mode(choice);
                 }
             }
             MenuTarget::VimClipboard => {
@@ -246,6 +281,15 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::DefaultLanguage => {
+                let language = match command {
+                    MenuCommand::UseLanguage(i) => winc_syntax::languages().get(i).copied(),
+                    _ => None,
+                };
+                self.config.default_language = language.map(|language| language.id.to_owned());
+                self.save_config();
+                self.request_redraw();
+            }
             MenuTarget::TextWidth => {
                 if let MenuCommand::TextWidth(i) = command
                     && let Some(&width) = winc_config::TextWidth::ALL.get(i)
@@ -384,6 +428,11 @@ impl App {
                     self.activate_tab(i);
                 }
             }
+            MenuTarget::LatexProblems => {
+                if let MenuCommand::LatexProblem(i) = command {
+                    self.show_latex_problem(i);
+                }
+            }
             MenuTarget::RunConfigs => match command {
                 MenuCommand::RunSelect(i) => self.select_run_config(i),
                 MenuCommand::RunEdit => self.edit_run_configs(),
@@ -459,6 +508,7 @@ impl App {
             MenuCommand::RemoveFolder => self.remove_folder(&target),
             MenuCommand::Reveal => self.reveal_in_file_manager(&target),
             MenuCommand::OpenInTerminal => self.open_in_terminal(Some(&target)),
+            MenuCommand::RunScript => self.run_script(&target),
             MenuCommand::FindInFolder => self.find_in_folder(&target),
             MenuCommand::CopyPath => self.copy_path(&target, false),
             MenuCommand::CopyRelativePath => self.copy_path(&target, true),
@@ -481,7 +531,7 @@ impl App {
             _ => {}
         }
         match command {
-            MenuCommand::Copy => self.terminal_copy(),
+            MenuCommand::Copy => self.terminal_copy(false),
             MenuCommand::Paste => self.terminal_paste(),
             MenuCommand::SelectAll => self.terminal_select_all(),
             MenuCommand::TerminalFind => self.open_terminal_find(),
@@ -514,6 +564,7 @@ impl App {
             MenuCommand::FormatSelection => self.format_selection(),
             MenuCommand::Fix => self.fix_active(),
             MenuCommand::GoToDefinition => self.go_to_definition(),
+            MenuCommand::OpenLink => self.open_caret_link(),
             MenuCommand::FindReferences => self.find_references(),
             MenuCommand::AddBookmark => self.set_bookmark(true),
             MenuCommand::RemoveBookmark => self.set_bookmark(false),
@@ -527,7 +578,7 @@ impl App {
                     .and_then(|doc| doc.path.clone())
                     .and_then(|path| self.run_args_memory.get(&path).cloned())
                     .unwrap_or_default();
-                self.run_script(id, &extra);
+                self.run_script_with_args(id, &extra);
             }
             MenuCommand::RunScriptArgs => self.open_run_args_prompt(id),
             _ => {}

@@ -269,7 +269,7 @@ impl App {
     ///
     /// 与运行配置不同——右键点「运行脚本」本身就是用户确认，不需要再弹确认框
     /// （仓库里的 `.winc/run.json` 才需要指纹确认）。
-    pub(in crate::app) fn run_script(&mut self, id: winc_editor::DocumentId, extra: &str) {
+    pub(in crate::app) fn run_script_with_args(&mut self, id: winc_editor::DocumentId, extra: &str) {
         let Some(path) = self.editor.document(id).and_then(|doc| doc.path.clone()) else {
             return;
         };
@@ -607,6 +607,8 @@ impl super::TerminalPanel {
         self.run_queue.len()
     }
 }
+
+mod script;
 
 #[cfg(test)]
 mod tests;

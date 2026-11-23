@@ -303,8 +303,8 @@ impl App {
         if self.hex_active() {
             return self.hex_parts().body;
         }
-        if self.editor.active().is_some_and(|d| d.diff.is_some()) {
-            let header = crate::app::diff::DIFF_HEADER;
+        if let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) {
+            let header = crate::app::diff::diff_top(view);
             Rect::new(
                 editor.x,
                 editor.y + header,
@@ -468,6 +468,27 @@ impl App {
         self.clipboard.text()
     }
 
+    /// 剪切光标到行尾的文字，光标在行尾时剪切换行符；有选区时剪切选区。剪贴板里放的是主光标处
+    /// 剪下的文字。
+    pub(in crate::app) fn cut_to_line_end(&mut self) {
+        let Some(doc) = self.editor.active() else {
+            return;
+        };
+        let removed = winc_core::edit::delete_to_line_end(doc.text(), doc.selection)
+            .and_then(|t| t.changes.into_iter().next())
+            .map(|change| change.removed);
+        let Some(removed) = removed else {
+            return;
+        };
+        let revision = doc.revision;
+        self.focus = Focus::Editor;
+        self.run(Command::DeleteToLineEnd);
+        // 只读的文档不会改动，剪贴板也不动。
+        if self.editor.active().is_some_and(|d| d.revision != revision) {
+            self.set_clipboard(removed, false);
+        }
+    }
+
     /// 复制选区（`cut` 为 `true` 时剪切）；没有选区时操作光标所在的整行。
     pub(in crate::app) fn copy(&mut self, cut: bool) {
         // 十六进制视图：复制选中的字节，写成十六进制；只读，不能剪切。
@@ -625,6 +646,17 @@ impl App {
     /// 没有选区且 `content` 等于最近一次整行复制的内容时，插入到当前行上方；否则在光标处插入。
     /// Markdown 中网址、图片网址和表格单元格按 [`App::markdown_paste`] 改写。
     pub(super) fn paste_text(&mut self, content: String) {
+        // 空的未命名纯文本文档：按粘贴的内容识别语言（`editor.detectLanguageOnPaste`）。
+        let blank = self.editor.active().is_some_and(|doc| {
+            let untitled = doc.path.is_none() && doc.title.is_none();
+            untitled && doc.text().end_pos() == 0 && doc.highlighter.language().id == "text"
+        });
+        if blank
+            && self.config.detect_language_on_paste != Some(false)
+            && let Some(language) = winc_editor::paste::sniffed_language(&content)
+        {
+            self.use_language(language);
+        }
         if let Some(text) = self.markdown_paste(&content) {
             self.run(Command::Insert(text));
             return;

@@ -9,6 +9,24 @@ pub(crate) fn tooltip(app: &App) -> Option<(Rect, String)> {
     workspace::panel::tooltip(app)
 }
 
+pub(crate) fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_editor(app, frame);
+}
+
+pub(crate) fn draw_pane(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_pane(app, frame, true);
+}
+
+pub(crate) fn draw_notices(app: &mut App, frame: &mut Frame<'_>) {
+    super::draw_notices(app, frame);
+}
+
+pub(crate) fn draw_floating_bar(app: &mut App, frame: &mut Frame<'_>) {
+    let area = app.layout.editor;
+    let bar = Rect::new(area.right() - 80.0, area.y + 4.0, 160.0, 28.0);
+    super::draw_floating_bar(frame, app.palette, bar, area);
+}
+
 pub(crate) use super::settings::draw_cached as settings_draw_cached;
 pub(crate) use crate::app::workspace::tab_names::distinct_folder;
 
@@ -157,12 +175,12 @@ fn tooltip_lines_wrap_to_the_room_and_keep_continuations_in_the_body() {
     // 每个字符宽 10 逻辑像素。
     let measure = |s: &str| s.chars().count() as f32 * 10.0;
     assert_eq!(
-        super::tip_lines("abcdef ghij\nsrc", 60.0, 0.0, measure),
+        super::tooltip::tip_lines("abcdef ghij\nsrc", 60.0, 0.0, measure),
         vec![("abcdef", true), ("ghij", true), ("src", false)]
     );
     // 快捷键只占第一行：第一段的宽度减去快捷键一栏，其余各段仍按整行宽度折行。
     assert_eq!(
-        super::tip_lines("abc def\nabc def", 70.0, 20.0, measure),
+        super::tooltip::tip_lines("abc def\nabc def", 70.0, 20.0, measure),
         vec![("abc", true), ("def", true), ("abc def", false)]
     );
 }

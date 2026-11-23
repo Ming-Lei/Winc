@@ -188,7 +188,7 @@ fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
 
     for (rect, tool) in parts.tools {
         // 没有结果时「清除」「全部折叠」置灰。
-        let enabled = tool == PanelTool::Refresh || has_results;
+        let enabled = matches!(tool, PanelTool::Refresh | PanelTool::OpenDialog) || has_results;
         let hovered = enabled && app.pointer.hover == Hover::Panel(PanelButton::Tool(tool));
         draw_button(frame, p, rect, header, hovered, false);
 
@@ -202,6 +202,7 @@ fn draw_panel_header(app: &App, frame: &mut Frame<'_>, parts: &PanelParts) {
         match tool {
             PanelTool::Refresh => icons::refresh(frame, c, color, header),
             PanelTool::Clear => icons::clear_results(frame, c, color, header),
+            PanelTool::OpenDialog => icons::external(frame, c, color, header),
             PanelTool::CollapseAll if app.panels.global.all_collapsed() => {
                 icons::expand_all(frame, c, color, header);
             }
@@ -888,6 +889,11 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
+        Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::SearchDialog) => {
+            let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
+            let name = t!("workspace-search-tool-open-dialog");
+            Some((rect, with_key(name, Some(Action::OpenSearchDialog))))
+        }
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::Hide) => {
             let rect = app.hits.terminal.iter().find(|(_, h)| *h == hit)?.0;
             Some((
@@ -1015,11 +1021,16 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label.to_owned()))
         }
-        Hover::Commit(target @ (CommitTarget::StageFile(..) | CommitTarget::GroupStage(_))) => {
+        Hover::Commit(
+            target @ (CommitTarget::StageFile(..)
+            | CommitTarget::GroupStage(_)
+            | CommitTarget::DirStage(..)),
+        ) => {
             let rect = app.hits.commit.iter().find(|(_, t)| *t == target)?.0;
             let unstage = matches!(
                 target,
                 CommitTarget::StageFile(_, false)
+                    | CommitTarget::DirStage(_, false)
                     | CommitTarget::GroupStage(crate::app::CommitGroup::Staged)
             );
             let label = if unstage {
@@ -1084,15 +1095,6 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             Some((rect, t!("git-branch-picker-new-worktree").to_owned()))
         }
         Hover::Commit(CommitTarget::Location) => None,
-        // 历史差异文件列表的显示方式按钮：写明点击后切换成哪一种。
-        Hover::LogDiffLayout => {
-            let label = if app.log_list().flat() {
-                t!("workspace-tip-show-as-tree")
-            } else {
-                t!("workspace-tip-show-as-list")
-            };
-            Some((app.log_diff_layout_button(), label.to_owned()))
-        }
         Hover::Commit(CommitTarget::CommitMenu) => Some((
             app.commit_parts().commit_menu,
             t!("workspace-tip-commit-menu").to_owned(),
@@ -1141,6 +1143,8 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
         }
         Hover::RulerChange(hunk) => app.ruler_tip(hunk),
         Hover::Blame(line) => app.blame_tip(line),
+        Hover::LatexStatus => Some((app.hits.latex_status, app.latex_status_tip()?)),
+        Hover::LatexProblem(line) => app.latex_problem_tip(line),
         Hover::Change(target) => {
             use crate::app::ChangeTarget;
             let rect = app.hits.changes.iter().find(|(_, t)| *t == target)?.0;
@@ -1182,10 +1186,22 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 DiffTarget::NextFile => {
                     with_key(t!("workspace-tip-next-file"), Some(Action::NextDiffFile))
                 }
+                DiffTarget::OpenFile => t!("workspace-tip-open-file").to_owned(),
+                DiffTarget::Blame(side, line) => app.diff_blame_tip(side, line)?,
                 DiffTarget::Layout if app.editor.diff_unified => {
                     t!("workspace-tip-diff-side-by-side").to_owned()
                 }
                 DiffTarget::Layout => t!("workspace-tip-diff-inline").to_owned(),
+                DiffTarget::FilesToggle if app.log_files_open() => {
+                    t!("git-log-diff-hide-files").to_owned()
+                }
+                DiffTarget::FilesToggle => t!("git-log-diff-show-files").to_owned(),
+                DiffTarget::FilesLayout if app.diff_files_flat() => {
+                    t!("workspace-tip-show-as-tree").to_owned()
+                }
+                DiffTarget::FilesLayout => t!("workspace-tip-show-as-list").to_owned(),
+                // 文件栏里截短或改过名的文件：完整路径；其余文件不提示。
+                DiffTarget::File(i) => app.log_diff_file_tip(i)?,
                 DiffTarget::Revert(_) => with_key(
                     t!("workspace-tip-revert-to-left"),
                     Some(Action::GitRevertChange),
@@ -1245,6 +1261,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             let label = match tool {
                 PanelTool::Refresh => t!("workspace-search-tool-refresh"),
                 PanelTool::Clear => t!("workspace-search-tool-clear"),
+                PanelTool::OpenDialog => {
+                    let name = t!("workspace-search-tool-open-dialog");
+                    return Some((rect, with_key(name, Some(Action::OpenSearchDialog))));
+                }
                 PanelTool::CollapseAll if app.panels.global.all_collapsed() => {
                     t!("workspace-search-tool-expand-all")
                 }

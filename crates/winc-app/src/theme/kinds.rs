@@ -174,6 +174,11 @@ fn document_kind(stem: &str) -> Option<(FileGlyph, [u32; 2])> {
     }
 }
 
+/// 返回语言 `language` 的类型记号和颜色：这种语言的文件用的那一个，纯文本用文本文件的。
+pub fn language_kind(language: &winc_syntax::Language) -> (FileGlyph, [u32; 2]) {
+    (language.file_name("a")).map_or_else(|| file_kind("a.txt"), |name| file_kind(&name))
+}
+
 /// 扩展名表认不出、编辑器能高亮的文件：按该语言的主扩展名配图标，没有时画 `Code`。编辑器新加
 /// 的语言不必在扩展名表中再登记一次。
 fn by_language(name: &str) -> Option<(FileGlyph, [u32; 2])> {
@@ -277,7 +282,8 @@ fn by_extension(ext: &str) -> Option<(FileGlyph, [u32; 2])> {
 
         // 文档。
         "md" | "markdown" | "mdx" | "qmd" => (Markdown, DOC),
-        "rst" | "adoc" | "asciidoc" | "org" | "tex" | "bib" | "typ" => (Text, DOC),
+        "tex" | "ltx" | "sty" | "cls" | "dtx" => (Letters("TEX"), GREEN),
+        "rst" | "adoc" | "asciidoc" | "org" | "bib" | "typ" => (Text, DOC),
         "txt" | "text" | "log" | "out" | "rtf" | "nfo" => (Text, GREY),
         "pdf" => (Text, RED),
         "doc" | "docx" | "pages" | "odt" | "epub" => (Text, BLUE),

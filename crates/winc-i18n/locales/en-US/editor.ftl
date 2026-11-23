@@ -69,6 +69,7 @@ editor-symbol-variable = Variable
 editor-symbol-heading = Heading
 editor-symbol-section = Section
 editor-definition-no-name = No name to look up at the cursor
+editor-no-link = No link at the cursor
 editor-usages-not-found = No other usages of “{ $name }” found
 editor-definition-at-caret = The cursor is already at the definition of “{ $name }”
 editor-definition-not-found = No definition of “{ $name }” found
@@ -84,6 +85,10 @@ editor-places-usages-count = { $count ->
 editor-places-bookmarks-count = { $count ->
         [one] { $count } bookmark
        *[other] { $count } bookmarks
+    }
+editor-places-search-count = { $count ->
+        [one] { $count } result
+       *[other] { $count } results
     }
 editor-places-no-match = No matching locations
 editor-places-usages-suffix = { " " }usages
@@ -121,6 +126,8 @@ editor-encoding-windows-1258 = Vietnamese (Windows 1258)
 editor-encoding-windows-874 = Thai (Windows 874)
 editor-encoding-lossy = Non-UTF-8
 editor-encoding-binary = Binary
+editor-encoding-unicode-escapes = Unicode Escapes (\uXXXX)
+editor-encoding-unicode-escapes-short = Unicode Escapes
 editor-encoding-unencodable = “{ $char }” can’t be saved in { $encoding }; use “Save with Encoding” to save as UTF-8
 
 ## Reading and writing files.
@@ -158,6 +165,7 @@ editor-size-bytes = { $count ->
 ## External programs.
 
 editor-process-timeout = Timed out
+editor-latex-stalled = The compile produced no output for { $minutes } minutes and was stopped
 editor-process-too-large = Too much output
 editor-process-cancelled = Cancelled
 editor-process-no-stdout = Couldn’t get standard output

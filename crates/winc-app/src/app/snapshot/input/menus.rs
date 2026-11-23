@@ -561,8 +561,9 @@ fn typing_filters_the_language_menu() {
     app.pointer.modifiers = winit::keyboard::ModifiersState::empty();
     assert_eq!(app.popup().unwrap().query, "zz");
     // Esc：先清空筛选，列出全部；再按一次关掉菜单。
+    // 刚才选过的 Rust 移到最近选择的语言中：多出一条分隔线。
     named(&mut app, NamedKey::Escape);
-    assert_eq!(app.popup().unwrap().levels[0].rows.len(), all);
+    assert_eq!(app.popup().unwrap().levels[0].rows.len(), all + 1);
     named(&mut app, NamedKey::Escape);
     assert!(app.overlays.context_menu.is_none());
 
@@ -627,7 +628,8 @@ fn the_language_picker_filters_by_name_and_extension() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 截图：面板中的语言列表，键入「ru」筛选（`language-picker-light`）。
+/// 截图：面板中的语言列表，键入「ru」筛选（`language-picker-light`）；状态栏的语言菜单
+/// （`language-menu-light`）。
 #[test]
 #[ignore = "截图，手动运行"]
 fn shoot_language_picker() {
@@ -640,6 +642,10 @@ fn shoot_language_picker() {
     app.overlays.picker.input.set_text("ru");
     app.picker_refresh();
     shoot(&mut app, "language-picker-light");
+    app.close_picker();
+    app.open_status_menu(StatusItem::Language);
+    paint(&mut app);
+    shoot(&mut app, "language-menu-light");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -813,5 +819,41 @@ fn a_binary_file_can_be_reopened_with_an_encoding() {
     assert_eq!(doc.encoding, Encoding::Utf16Le);
     assert_eq!(doc.text().rope().unwrap().to_string(), "中文 ok\n");
     assert!(doc.readonly_reason().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `.properties` 打开后按 Unicode 转义显示字符，编码菜单中列出「Unicode 转义」并勾选，小写的转义
+/// 同样处理；其他文件不列出。
+#[test]
+fn the_encoding_menu_offers_unicode_escapes_for_properties() {
+    use crate::app::status::status_bar::StatusItem;
+    use winc_editor::Encoding;
+    use winc_editor::encoding::CHOICES;
+    let dir = sample_folder("unicode-escapes-menu");
+    let escapes = (CHOICES.iter())
+        .position(|(e, _)| matches!(e, Encoding::UnicodeEscapes { .. }))
+        .unwrap();
+    let listed = |name: &str, text: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        let mut app = app_with(&path, false);
+        paint(&mut app);
+        let encoding = app.editor.active().unwrap().encoding;
+        app.open_status_menu(StatusItem::Encoding);
+        let command = MenuCommand::ReopenEncoding(escapes);
+        let listed = (menu_commands(&app).into_iter()).any(|(c, _)| c == command);
+        (encoding, listed, listed && app.menu_checked(command))
+    };
+    for (lowercase, text) in [(false, "hi=\\u4F60\n"), (true, "hi=\\u4f60\n")] {
+        let latin1 = false;
+        assert_eq!(
+            listed("messages.properties", text),
+            (Encoding::UnicodeEscapes { lowercase, latin1 }, true, true)
+        );
+    }
+    assert_eq!(
+        listed("notes.txt", "hi=\\u4F60\n"),
+        (Encoding::Utf8, false, false)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

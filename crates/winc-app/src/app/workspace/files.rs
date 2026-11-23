@@ -298,16 +298,21 @@ impl App {
         if replace.is_none() {
             self.preview_tab = None;
         }
+        let startup = self.startup_file_index();
         self.auto_save_active();
         let count = self.editor.tab_count();
         let index = self.editor.open_tab(path);
         let id = self.editor.documents[index].id;
+        let added = self.editor.tab_count() > count;
+        if let Some(old) = startup.filter(|_| added) {
+            self.replace_preview_tab(old, index);
+        }
         if !preview {
             // 以其他方式打开预览标签中的文件时，该标签成为普通标签。
             if self.preview_tab == Some(id) {
                 self.preview_tab = None;
             }
-        } else if self.editor.tab_count() > count {
+        } else if added {
             if let Some(old) = replace {
                 self.replace_preview_tab(old, index);
             }
@@ -326,8 +331,8 @@ impl App {
         self.request_redraw();
     }
 
-    /// 用新打开的第 `new` 个标签替换预览标签（第 `old` 个）：新标签移到原位置，原标签关闭，
-    /// 不播放动画，不记入最近关闭的标签。
+    /// 用新打开的第 `new` 个标签替换预览标签或启动时新建的文件（第 `old` 个）：新标签移到
+    /// 原位置，原标签关闭，不播放动画，不记入最近关闭的标签。
     fn replace_preview_tab(&mut self, old: usize, new: usize) {
         let id = self.editor.documents[new].id;
         let replaced = self.editor.documents[old].id;
@@ -362,6 +367,10 @@ impl App {
             .iter_mut()
             .for_each(|(path, _)| relocate(path));
         self.jumps.navigation.relocate(from, to);
+        let known = |(path, _): &(PathBuf, _)| path.starts_with(from);
+        if self.state.places.iter().any(known) {
+            self.update_state(|state| state.move_places(from, to));
+        }
         self.picker_touched(vec![from.to_path_buf(), to.to_path_buf()]);
         self.files_changed_under_results();
     }
@@ -654,12 +663,63 @@ impl App {
         self.activate_tab(index);
     }
 
+    /// 返回另存文档 `id` 时默认的文件名：已有文件名的沿用；未命名的用标签上的名字加所用语言的
+    /// 扩展名（见 [`winc_syntax::Language::file_name`]），保存后仍是这种语言，纯文本加 `.txt`。
+    pub(in crate::app) fn save_name(&self, id: DocumentId) -> String {
+        let Some(doc) = self.editor.document(id) else {
+            return "untitled.txt".to_owned();
+        };
+        let name = doc.name();
+        if doc.path.is_some() || doc.title.is_some() {
+            return name.into_owned();
+        }
+        let language = doc.highlighter.language();
+        (language.file_name(&name)).unwrap_or_else(|| format!("{name}.txt"))
+    }
+
     /// 新建未命名文档并切换到该文档。
     pub(in crate::app) fn new_file(&mut self) {
         self.editor.new_untitled();
+        // 新建的未命名文件使用设置的默认语言（`editor.defaultLanguage`）。
+        let language = self.default_language();
+        if let (Some(language), Some(doc)) = (language, self.editor.active_mut()) {
+            doc.choose_language(language);
+        }
         self.focus = Focus::Editor;
         self.relayout();
         self.request_redraw();
+    }
+
+    /// 返回设置的新建文件的默认语言；未设置或没有这种语言时为 `None`。
+    pub(crate) fn default_language(&self) -> Option<&'static winc_syntax::Language> {
+        let id = self.config.default_language.as_deref()?;
+        winc_syntax::languages()
+            .iter()
+            .copied()
+            .find(|l| l.id == id)
+    }
+
+    /// 启动或新建窗口时没有目录和标签的，按设置（`editor.newFileOnStartup`）新建一个未命名
+    /// 文件，代替开始页。之后打开的第一个文件或目录替换它（见 [`App::startup_file_index`]）。
+    pub(crate) fn start_with_new_file(&mut self) {
+        let empty = self.editor.root().is_none() && self.editor.tab_count() == 0;
+        if self.config.new_file_on_startup == Some(true) && empty {
+            self.new_file();
+            self.startup_file = self.editor.active().map(|doc| doc.id);
+        }
+    }
+
+    /// 返回启动时新建的文件的序号；它不是唯一的标签、已关闭或已修改时为 `None`。
+    pub(crate) fn startup_file_index(&self) -> Option<usize> {
+        let index = self.editor.index_of(self.startup_file?)?;
+        let doc = &self.editor.documents[index];
+        (self.editor.tab_count() == 1 && !doc.history.has_changes()).then_some(index)
+    }
+
+    /// 窗口是否什么都没开：没有目录，标签至多是启动时新建、尚未修改的那个文件。
+    pub(crate) fn is_blank(&self) -> bool {
+        let unused = self.editor.documents.is_empty() || self.startup_file_index().is_some();
+        self.editor.root().is_none() && unused
     }
 
     /// 循环切换标签：`forward` 为 `true` 时切到下一个，否则切到上一个；到两端后绕回。
@@ -946,6 +1006,7 @@ impl App {
                     self.flash(t!("workspace-saved", name = name));
                 }
                 self.blame_saved(id);
+                self.latex_saved(id);
                 self.run_file_saved(id);
                 if saved_as {
                     if let Some((other, _)) = other {
@@ -982,11 +1043,12 @@ impl App {
         let Some(proxy) = self.link.proxy.clone() else {
             return;
         };
-        // 另存为：默认使用原来的名字，从原来所在的目录开始；新文件从已打开的目录开始。
+        // 另存为：默认使用原来的名字，从原来所在的目录开始；新文件的名字带上所用语言的扩展名，
+        // 从已打开的目录开始。
         let (name, dir) = match &kind {
             Pick::SaveAs(id) => {
                 let doc = self.editor.document(*id);
-                let name = doc.map_or_else(|| "untitled.txt".to_owned(), |d| d.name().into_owned());
+                let name = self.save_name(*id);
                 let dir = doc
                     .and_then(|d| d.path.as_ref()?.parent().map(Path::to_path_buf))
                     .or_else(|| self.editor.root().map(Path::to_path_buf));
@@ -1201,25 +1263,20 @@ impl App {
     pub(in crate::app) fn check_disk(&mut self) {
         self.check_remote();
         self.sync_documents(|_| true);
-        // 在终端里提交、切换分支时 `.git` 可能不在监视范围内：打开的是仓库中的子目录，或者没有
-        // 启动监视。工作树、子模块的 `.git` 是文件，真正的目录在其他位置。仓库根位于已监视的目录
-        // 中、`.git` 是目录时，它的变化已由监视报告，不必每次窗口重新获得焦点都启动 git。
-        // `.git` 的位置取自上一次读到的状态，不访问文件系统：远端的仓库不能在界面线程上查询。
         self.git_discover();
         self.restart_exited_watcher();
+        // `.git` 在监视范围内时分支、储藏的变化已由监视报告，只补查一次工作区状态；否则（打开的
+        // 是仓库中的子目录、工作树或子模块，或没有监视）连同分支、储藏一起重读。
+        if self.git_watched() {
+            self.git_refresh_status();
+        } else {
+            self.git_refresh();
+        }
         let live = self
             .disk
             .watcher
             .as_ref()
             .is_some_and(winc_editor::Watcher::reliable);
-        let watched = (self.disk.watcher.as_ref().filter(|_| live)).zip(self.git.root.as_deref());
-        let git_dir = (self.git.status.as_ref()).and_then(|status| status.git_dir.as_deref());
-        if !watched.is_some_and(|(w, root)| {
-            root.starts_with(w.root()) && git_dir == Some(root.join(".git").as_path())
-        }) {
-            self.git_refresh();
-        }
-
         if !live {
             // 发行版无法访问时目录都读不到，保留现有的文件树。
             let reachable = self.editor.root().is_none_or(winc_editor::wsl::reachable);

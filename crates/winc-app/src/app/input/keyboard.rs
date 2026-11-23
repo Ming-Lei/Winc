@@ -125,10 +125,12 @@ impl App {
         }
 
         match self.focus {
-            Focus::Editor => self.on_key_editor(event, cmd),
+            Focus::Editor => self.on_key_editor(&EditorKey::of(event), cmd),
             Focus::Search | Focus::Replace => self.on_key_search(event, &base, cmd),
             Focus::Prompt => self.on_key_prompt(event, &base, cmd),
             Focus::Picker => self.on_key_picker(event, &base, cmd),
+            Focus::SearchDialog | Focus::SearchMask => self.on_key_search_dialog(event, &base, cmd),
+            Focus::SearchDock => self.on_key_search_dock(&event.logical_key),
             // 设置浮层打开时已在上方处理，不会执行到这里。
             Focus::Setting
             | Focus::Settings
@@ -142,15 +144,7 @@ impl App {
             | Focus::GlobalExclude => self.on_key_panel_field(event, &base, cmd),
             Focus::Results => self.on_key_results(event),
             Focus::CommitMessage => self.on_key_commit_message(event, &base, cmd),
-            // 历史提交的文件列表借用提交视图的列表，按键同样交给它处理。
-            Focus::CommitList => {
-                if self
-                    .with_log_list(|app| app.on_key_commit_list(event))
-                    .is_none()
-                {
-                    self.on_key_commit_list(event);
-                }
-            }
+            Focus::CommitList => self.on_key_commit_list(event),
             Focus::Outline => self.outline_key(&event.logical_key),
             Focus::LogFilter => self.on_key_log_filter(event, &base, cmd),
             Focus::Terminal => self.on_key_terminal(event),
@@ -170,6 +164,8 @@ impl App {
             Focus::Replace => Context::Replace,
             Focus::Tree => Context::Tree,
             Focus::CommitList => Context::Changes,
+            // 对话框用搜索面板的键位：切换大小写、全字、正则。
+            Focus::SearchDialog | Focus::SearchMask => Context::Panel,
             // 终端的查找框、标签上改名字的输入框也按终端的键位：`⌘W` 关的是终端标签，`⌘F` 回到
             // 终端的查找，不进入编辑区（编辑用的快捷键见 `run_action`，留给输入框）。
             Focus::Terminal | Focus::TerminalFind | Focus::TerminalRename => Context::Terminal,
@@ -257,6 +253,12 @@ impl App {
         }
 
         match self.lookup_shortcut(stroke, None) {
+            Lookup::Run(actions)
+                if self.focus == Focus::Terminal
+                    && self.run_terminal_shortcut(stroke, &actions) =>
+            {
+                true
+            }
             Lookup::Run(actions) => actions
                 .into_iter()
                 .any(|a| self.run_action(self.keyboard_action(a))),
@@ -289,35 +291,35 @@ impl App {
     }
 
     /// 处理焦点在编辑区时的按键：移动光标、翻页、换行、缩进、删除和键入。
-    pub(in crate::app) fn on_key_editor(&mut self, event: &KeyEvent, cmd: bool) {
+    pub(in crate::app) fn on_key_editor(&mut self, event: &EditorKey, cmd: bool) {
         if self.editor.active.is_none() {
             if !event.repeat {
-                self.setup_key(&event.logical_key);
+                self.setup_key(event.key);
             }
             return;
         }
         if self.log_active() {
-            self.log_key(&event.logical_key);
+            self.log_key(event.key);
             return;
         }
         if self.hex_active() {
-            self.hex_key(&event.logical_key, cmd);
+            self.hex_key(event.key, cmd);
             return;
         }
         if self.editor.active().is_some_and(|d| d.diff.is_some()) {
             if !self.diff_edit_key(event, cmd) {
-                self.diff_key(&event.logical_key, cmd);
+                self.diff_key(event.key, cmd);
             }
             return;
         }
-        if self.markdown_key(&event.logical_key, cmd)
-            || self.table_key(&event.logical_key, cmd)
-            || self.pdf_key(&event.logical_key)
+        if self.markdown_key(event.key, cmd)
+            || self.table_key(event.key, cmd)
+            || self.pdf_key(event.key)
         {
             return;
         }
         // 改动卡片开着时 `Esc` 先关卡片。
-        if self.git.changes.popup.is_some() && event.logical_key == Key::Named(NamedKey::Escape) {
+        if self.git.changes.popup.is_some() && *event.key == Key::Named(NamedKey::Escape) {
             self.git.changes.popup = None;
             self.request_redraw();
             return;
@@ -337,7 +339,7 @@ impl App {
         };
         let jump = cfg!(target_os = "macos") && cmd;
 
-        let command = match &event.logical_key {
+        let command = match event.key {
             Key::Named(NamedKey::ArrowLeft) if jump => Command::LineStart { extend },
             Key::Named(NamedKey::ArrowRight) if jump => Command::LineEnd { extend },
             Key::Named(NamedKey::ArrowUp) if jump => Command::DocStart { extend },
@@ -375,7 +377,7 @@ impl App {
             _ => {
                 // 普通字符输入；输入法提交的文字由 `Ime::Commit` 处理。
                 if !control
-                    && let Some(text) = &event.text
+                    && let Some(text) = event.text
                     && !text.chars().any(char::is_control)
                 {
                     self.run(Command::Insert(text.to_string()));
@@ -384,6 +386,11 @@ impl App {
             }
         };
 
+        self.run_key_command(command);
+    }
+
+    /// 在编辑区执行按键或快捷键对应的命令 `command`。
+    pub(in crate::app) fn run_key_command(&mut self, command: Command) {
         let head = self.editor.active().map(|d| (d.selection.head, d.revision));
         self.run(command);
         // 可编辑的 Markdown 预览：只移动了光标时，不停留在预览中不显示的块标记里。
@@ -392,6 +399,26 @@ impl App {
         {
             self.live_settle_caret(head);
         }
+    }
+
+    /// 像在编辑区按下 `key` 一样处理：只带 `⇧`（`shift` 为真且按着 `⇧` 时），其余修饰键不算。
+    ///
+    /// 键位表中等同于方向键、删除键的命令（macOS 的 `⌃N`、`⌃H` 等）由此执行，Markdown 预览、
+    /// 表格、差异和十六进制视图都按真的按下这个键处理。
+    pub(in crate::app) fn press_editor_key(&mut self, key: NamedKey) {
+        if self.focus != Focus::Editor {
+            return;
+        }
+        let held = self.pointer.modifiers;
+        self.pointer.modifiers = held & winit::keyboard::ModifiersState::SHIFT;
+        let key = Key::Named(key);
+        let event = EditorKey {
+            key: &key,
+            text: None,
+            repeat: false,
+        };
+        self.on_key_editor(&event, false);
+        self.pointer.modifiers = held;
     }
 
     /// 处理查找条（查找、替换输入框）中的按键。
@@ -439,6 +466,8 @@ impl App {
                     _ => self.step_from_field(shift),
                 }
             }
+            Key::Named(NamedKey::ArrowUp) if cmd => self.step_panel_focus(true),
+            Key::Named(NamedKey::ArrowDown) if cmd => self.step_panel_focus(false),
             Key::Named(NamedKey::ArrowUp) if !shift => self.edit_field(|f| f.recall(true)),
             Key::Named(NamedKey::ArrowDown) if !shift => self.edit_field(|f| f.recall(false)),
             Key::Named(NamedKey::Tab) => self.cycle_panel_focus(shift),
@@ -446,9 +475,71 @@ impl App {
         }
     }
 
+    /// 处理在文件中查找的对话框中的按键：`↑` `↓` `PageUp` `PageDown` 移动选中项，回车打开，
+    /// `Esc` 关闭，其余交给输入框，内容变化后重新搜索。
+    fn on_key_search_dialog(&mut self, event: &KeyEvent, base: &str, cmd: bool) {
+        let selected = self.search_dialog.selected;
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.close_search_dialog(),
+            Key::Named(NamedKey::Enter) if cmd => self.dock_search_results(),
+            Key::Named(NamedKey::Enter) => self.search_dialog_accept(),
+            Key::Named(NamedKey::ArrowDown) => self.search_dialog_select(selected + 1),
+            Key::Named(NamedKey::ArrowUp) => self.search_dialog_select(selected.saturating_sub(1)),
+            Key::Named(NamedKey::PageDown) => {
+                self.search_dialog_select(selected + self.search_dialog_page());
+            }
+            Key::Named(NamedKey::PageUp) => {
+                let page = self.search_dialog_page();
+                self.search_dialog_select(selected.saturating_sub(page));
+            }
+            // `Tab` 在查询和文件掩码之间切换；掩码隐藏时先显示出来。
+            Key::Named(NamedKey::Tab) => {
+                if !self.search_dialog.open {
+                    return;
+                }
+                if !self.search_dialog.mask_on {
+                    return self.toggle_search_mask();
+                }
+                self.focus = match self.focus {
+                    Focus::SearchDialog => Focus::SearchMask,
+                    _ => Focus::SearchDialog,
+                };
+                self.reset_blink();
+            }
+            _ => {
+                let d = &self.search_dialog;
+                let before = (d.query.text().to_owned(), d.mask.text().to_owned());
+                self.on_key_field(event, base, cmd);
+                let d = &self.search_dialog;
+                if d.query.text() != before.0 || d.mask.text() != before.1 {
+                    self.search_dialog_changed(false);
+                }
+            }
+        }
+    }
+
+    /// 处理底部面板「搜索」标签中的按键：`↑` `↓` `PageUp` `PageDown` 移动选中项，回车打开，
+    /// `Esc` 回到编辑区。
+    fn on_key_search_dock(&mut self, key: &Key) {
+        let selected = self.search_dialog.selected;
+        let page = self.search_dialog_page();
+        match key {
+            Key::Named(NamedKey::Escape) => self.focus = Focus::Editor,
+            Key::Named(NamedKey::Enter) => self.search_dialog_accept(),
+            Key::Named(NamedKey::ArrowDown) => self.search_dialog_select(selected + 1),
+            Key::Named(NamedKey::ArrowUp) => self.search_dialog_select(selected.saturating_sub(1)),
+            Key::Named(NamedKey::PageDown) => self.search_dialog_select(selected + page),
+            Key::Named(NamedKey::PageUp) => {
+                self.search_dialog_select(selected.saturating_sub(page))
+            }
+            _ => {}
+        }
+    }
+
     /// 处理搜索结果列表中的按键。
     ///
-    /// `↑` `↓` 移动选中项，`Home` `End` 选中第一行、最后一行，`PageUp` `PageDown` 翻一页，
+    /// `↑` `↓` 移动选中项并显示选中的匹配，`⌘↑` 回到输入框，`Home` `End` 选中第一行、
+    /// 最后一行，`PageUp` `PageDown` 翻一页，
     /// `←` `→` 折叠或展开文件，回车打开并将焦点移到编辑区，
     /// 空格打开但焦点留在列表，`⌫` 从结果中移除。
     fn on_key_results(&mut self, event: &KeyEvent) {
@@ -463,8 +554,15 @@ impl App {
 
         match key {
             Key::Named(NamedKey::Escape) => self.focus = Focus::GlobalQuery,
-            Key::Named(NamedKey::ArrowUp) => self.step_result(-1, false),
-            Key::Named(NamedKey::ArrowDown) => self.step_result(1, false),
+            Key::Named(NamedKey::ArrowUp) if self.command_held() => self.step_panel_focus(true),
+            Key::Named(NamedKey::ArrowUp) => {
+                self.step_result(-1, false);
+                self.browse_result();
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                self.step_result(1, false);
+                self.browse_result();
+            }
             Key::Named(NamedKey::Home) => self.jump_result(0),
             Key::Named(NamedKey::End) => self.jump_result(usize::MAX),
             Key::Named(NamedKey::PageDown) => {
@@ -1206,4 +1304,24 @@ pub struct ImeState {
     pub(in crate::app) last_area: Option<winc_render::Rect>,
     /// 上一次告知窗口的输入法是否启用；尚未告知时为 `None`。
     pub(in crate::app) allowed: Option<bool>,
+}
+
+/// 交给编辑区的一次按键：键、键入的文字，以及是否为按住不放时的重复。
+///
+/// 键位表中等同于方向键、删除键的命令（见 [`App::press_editor_key`]）也以这种形式交给编辑区。
+pub(in crate::app) struct EditorKey<'a> {
+    pub key: &'a Key,
+    pub text: Option<&'a str>,
+    pub repeat: bool,
+}
+
+impl<'a> EditorKey<'a> {
+    /// 返回窗口送来的按键 `event` 对应的编辑区按键。
+    pub(in crate::app) fn of(event: &'a KeyEvent) -> Self {
+        EditorKey {
+            key: &event.logical_key,
+            text: event.text.as_deref(),
+            repeat: event.repeat,
+        }
+    }
 }

@@ -34,7 +34,8 @@ pub use document::large::LargeText;
 pub use document::progress::ReadProgress;
 pub use document::{
     COPY_LIMIT, DiskChange, Document, DocumentId, EDIT_LIMIT, LARGE_FILE, OpenError, PictureState,
-    PreviewKind, PreviewMode, Reading, TableState, TableView, Unsupported, looks_binary, size_text,
+    PreviewKind, PreviewMode, Reading, TableState, TableView, Unsupported, looks_binary,
+    opens_as_large, size_text,
 };
 pub use document::{editorconfig, encoding};
 pub use editing::command::Command;
@@ -45,8 +46,8 @@ pub use editing::modal::ModalPattern;
 pub use editing::search::{MAX_MATCHES, Search, TextSearch};
 pub use editing::{paste, scopes};
 pub use navigation::bookmarks::{BookmarkMap, Bookmarks};
-pub use navigation::{bookmarks, definition, keypath, symbols, usages};
-pub use tools::{format, host, remote_env, shell, wsl};
+pub use navigation::{bookmarks, definition, keypath, links, symbols, usages};
+pub use tools::{format, host, latex, remote_env, shell, wsl};
 pub use workspace::copying::Copying;
 pub use workspace::picker::{FileIndex, IndexedFile, MAX_RESULTS as PICKER_MAX_RESULTS};
 pub use workspace::project_search::{
@@ -91,7 +92,7 @@ pub struct Editor {
     pub folds: FoldMap,
     /// 各类可预览的文件读取完成时采用的显示方式（[`Editor::finish_load`]），按
     /// [`PreviewKind::ALL`] 的顺序；默认为源代码。
-    pub preview_defaults: [PreviewMode; 3],
+    pub preview_defaults: [PreviewMode; PreviewKind::ALL.len()],
     next_id: u64,
 }
 
@@ -107,7 +108,7 @@ impl Default for Editor {
             diff_unified: false,
             bookmarks: BookmarkMap::new(),
             folds: FoldMap::new(),
-            preview_defaults: [PreviewMode::Source; 3],
+            preview_defaults: [PreviewMode::Source; PreviewKind::ALL.len()],
             next_id: 0,
         }
     }
@@ -766,6 +767,9 @@ pub struct LoadedFile {
 /// 否则新内容会命中旧内容的缓存。用户设置的只读随标签保留。
 fn replace_document(slot: &mut Document, mut fresh: Document) {
     fresh.revision += slot.revision + 1;
+    if let (Some(old), Some(new)) = (slot.diff.as_deref(), fresh.diff.as_deref_mut()) {
+        new.keep_blame(old);
+    }
     fresh.set_locked(slot.is_locked());
     fresh.set_all_locked(slot.all_locked());
     fresh.adopt_parked(slot);

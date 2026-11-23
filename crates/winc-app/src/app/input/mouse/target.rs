@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app::diff::DIFF_HSCROLL;
+use crate::app::workspace::search_dialog::DialogPart;
 
 impl App {
     /// 把顶栏当前的命中测试区域同步给窗口过程。
@@ -175,7 +176,9 @@ impl App {
                 | Target::SplitDivider
                 | Target::PaneDivider(_)
                 | Target::Log(crate::app::git::log::LogTarget::Divider)
+                | Target::Log(crate::app::git::log::LogTarget::BranchesEdge)
                 | Target::Log(crate::app::git::log::LogTarget::AuthorEdge)
+                | Target::Diff(crate::app::DiffTarget::FilesEdge)
         )
     }
 
@@ -204,6 +207,8 @@ impl App {
             Target::Change(target) => Hover::Change(target),
             Target::Merge(target) => Hover::Merge(target),
             Target::Conflict(action) => Hover::ConflictButton(action),
+            Target::SearchDialog(part) => Hover::SearchDialog(part),
+            Target::SearchDock(part) => Hover::SearchDock(part),
             Target::Picker
                 if let Some(&(_, part)) =
                     (self.hits.picker_parts.iter()).find(|(rect, _)| rect.contains(x, y)) =>
@@ -237,6 +242,9 @@ impl App {
             Target::ImageHandle => Hover::ImageHandle,
             Target::MarkdownText(None) | Target::PdfThumb(_) | Target::Picture => Hover::None,
             Target::PdfTool(tool) => Hover::PdfTool(tool),
+            Target::LatexStatus => Hover::LatexStatus,
+            Target::LatexProblem(line) => Hover::LatexProblem(line),
+            Target::LatexSource => Hover::None,
             Target::Tab(index, on_close) => Hover::Tab(index, on_close),
             Target::RulerChange(hunk) => Hover::RulerChange(hunk),
             Target::Crumb(index) => Hover::Crumb(index),
@@ -275,6 +283,12 @@ impl App {
     /// 层次相反，上层的部件先判断；顺序只在此处定义，新增部件只需在此处放到正确的位置。
     ///
     /// 只依据位置，不区分按键；设置浮层、右键和中键由调用方先行处理。
+    /// 鼠标是否在编辑区显示的文字上（没有被浮层、面板挡住）。
+    pub(in crate::app) fn over_editor_text(&self) -> bool {
+        let (x, y) = self.pointer.mouse;
+        self.active_shows_text() && matches!(self.target_at(x, y), Target::Editor)
+    }
+
     pub(super) fn target_at(&self, x: f32, y: f32) -> Target {
         let l = &self.layout;
         // 窗口最外圈的细边用于改变窗口大小，位于所有部件之上；窗口按钮位于顶栏右端。
@@ -331,6 +345,10 @@ impl App {
         if self.overlays.picker.open && l.picker.contains(x, y) {
             return Target::Picker;
         }
+        // 在文件中查找的对话框浮在编辑区和侧栏之上。
+        if let Some(part) = self.search_dialog_part_at(x, y) {
+            return Target::SearchDialog(part);
+        }
         if self.hits.tree_more.is_some_and(|more| more.contains(x, y)) {
             return Target::TreeMore;
         }
@@ -366,11 +384,9 @@ impl App {
         if l.search.contains(x, y) {
             return Target::Search;
         }
-        // 名称显示不全而展开的行（文件树、改动列表）覆盖在分隔条上，该行优先；
-        // 其余各行仍可拖动分隔条。
+        // 展开的全名可以画在分隔条上，分隔条仍然可以拖动；鼠标停在分隔条上时全名保持展开。
         let over_row = self.over_tree_overflow_row(y);
-        let over_any = over_row || over_commit_row || over_result_row;
-        if self.panels.sidebar.visible && !over_any && l.splitter.contains(x, y) {
+        if self.panels.sidebar.visible && l.splitter.contains(x, y) {
             return Target::Splitter;
         }
         if let Some(tool) = hit(&self.hits.tree_tools, x, y) {
@@ -449,6 +465,9 @@ impl App {
         if y < TOP_BAR_END {
             return Target::TitleBar;
         }
+        if let Some(part) = self.docked_part_at(x, y) {
+            return Target::SearchDock(part);
+        }
         if l.terminal.contains(x, y) {
             if self
                 .terminal_tab_list()
@@ -484,6 +503,9 @@ impl App {
         }
         if let Some(line) = hit(&self.hits.long_lines, x, y) {
             return Target::LongLine(line);
+        }
+        if let Some(line) = self.latex_problem_at(x, y) {
+            return Target::LatexProblem(line);
         }
         if let Some(line) = self.blame_at(x, y) {
             return Target::Blame(line);
@@ -524,6 +546,17 @@ impl App {
         }
         if let Some(tool) = hit(&self.hits.pdf_tools, x, y) {
             return Target::PdfTool(tool);
+        }
+        if self.hits.latex_status.contains(x, y) {
+            return Target::LatexStatus;
+        }
+        let command = if cfg!(target_os = "macos") {
+            self.pointer.modifiers.super_key()
+        } else {
+            self.pointer.modifiers.control_key()
+        };
+        if command && self.preview.pdf.area.contains(x, y) && self.latex_pdf().is_some() {
+            return Target::LatexSource;
         }
         if self.preview.pdf.strip.contains(x, y) {
             let thumb = self
@@ -589,15 +622,8 @@ impl App {
                 return Some((Scrollbar::Outline, grab(y, thumb.y, thumb.h)));
             }
         }
-        // Git 侧栏里正在显示的改动列表，或历史提交的文件列表。
-        if self.log_diff_tree().is_some() {
-            let list = self.commit_parts().list;
-            if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
-                let content = self.log_list_max_scroll() + list.h;
-                let thumb = scrollbar_thumb(list, self.log_list().scroll, content)?;
-                return Some((Scrollbar::Commit, grab(y, thumb.y, thumb.h)));
-            }
-        } else if self.commit_shown() {
+        // Git 侧栏里正在显示的改动列表。
+        if self.commit_shown() {
             let list = self.commit_parts().list;
             if list.contains(x, y) && x >= list.right() - SCROLLBAR_HIT {
                 let content = self.commit_max_scroll() + list.h;
@@ -744,19 +770,23 @@ impl App {
     ///
     /// 只有已展开的行优先。沿边缘上下移动到其他行时，该行尚未展开，滚动条正常响应。
     pub(in crate::app) fn over_tree_overflow_row(&self, y: f32) -> bool {
-        self.panels
-            .tree
-            .overflow
-            .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y))
+        self.panels.sidebar.view == SidebarView::Files
+            && self
+                .panels
+                .tree
+                .overflow
+                .is_some_and(|(rect, _)| (rect.y..rect.bottom()).contains(&y))
     }
 
     /// 窗口坐标 (`x`, `y`)（逻辑像素）是否位于文件树中显示不全的文件名
     /// 向右展开、覆盖到编辑区上方的区域内。
     pub(in crate::app) fn in_tree_overflow(&self, x: f32, y: f32) -> bool {
-        self.panels
-            .tree
-            .overflow
-            .is_some_and(|(rect, _)| rect.contains(x, y))
+        self.panels.sidebar.view == SidebarView::Files
+            && self
+                .panels
+                .tree
+                .overflow
+                .is_some_and(|(rect, _)| rect.contains(x, y))
     }
 
     /// 按鼠标当前位置重新判断悬停目标和指针样式；每绘制完一帧调用一次。
@@ -845,6 +875,39 @@ impl App {
             return;
         }
 
+        // 在文件中查找的对话框上：边缘显示改变大小的指针，输入框上显示文本光标，其余位置显示箭头。
+        let edge = match self.pointer.drag {
+            Drag::SearchDialogEdge { edge, .. } => Some(Some(DialogPart::Edge(edge.0, edge.1))),
+            Drag::SearchDialog { .. } => Some(Some(DialogPart::Title)),
+            _ => None,
+        };
+        let part = edge.unwrap_or_else(|| self.search_dialog_part_at(x, y));
+        if part.is_none()
+            && let Some(docked) = self.docked_part_at(x, y)
+        {
+            let icon = if docked == DialogPart::Query {
+                CursorIcon::Text
+            } else {
+                CursorIcon::Default
+            };
+            self.set_cursor_icon(icon);
+            return;
+        }
+        if let Some(part) = part {
+            let icon = match part {
+                DialogPart::Edge(0, _) => CursorIcon::NsResize,
+                DialogPart::Edge(_, 0) => CursorIcon::EwResize,
+                DialogPart::Edge(h, v) if h == v => CursorIcon::NwseResize,
+                DialogPart::Edge(..) => CursorIcon::NeswResize,
+                DialogPart::Query => CursorIcon::Text,
+                _ => CursorIcon::Default,
+            };
+            self.set_cursor_icon(icon);
+            return;
+        }
+
+        // 差异两侧和 Markdown 预览按最上层的目标判断：滚动条、折叠的一段、标题列表、工具栏、
+        // 盖在上面的卡片和面板，以及链接处不显示文本光标；拖选期间一直显示。
         let in_text = self.editor.active.is_some()
             && self.active_shows_text()
             && !matches!(
@@ -856,11 +919,21 @@ impl App {
             && !(self.overlays.picker.open && self.layout.picker.contains(x, y))
             && !self.over_corner_card(x, y)
             && x < self.layout.editor.right() - SCROLLBAR_HIT
-            || self.over_diff_text(x, y) && x < self.layout.editor.right() - SCROLLBAR_HIT;
+            || self.over_diff_text(x, y)
+                && x < self.layout.editor.right() - SCROLLBAR_HIT
+                && matches!(self.target_at(x, y), Target::Editor);
         // 日志详情中可选择的文字上（不含可点击的提交号和文件）显示文本光标。
         let in_field = self.field_at(x, y).is_some()
-            || matches!(self.pointer.drag, Drag::LogText | Drag::MarkdownText)
-            || (self.preview.markdown.area.contains(x, y) && self.markdown_link_at(x, y).is_none())
+            || matches!(
+                self.pointer.drag,
+                Drag::LogText
+                    | Drag::MarkdownText
+                    | Drag::DiffSelect { .. }
+                    | Drag::DiffSelectRead { .. }
+                    | Drag::DiffColumns { .. }
+            )
+            || (self.preview.markdown.area.contains(x, y)
+                && matches!(self.target_at(x, y), Target::MarkdownText(None)))
             || (self.log_active()
                 && crate::layout::hit(&self.hits.log, x, y).is_none()
                 && self.log_text_at(x, y, false).is_some());
@@ -901,6 +974,8 @@ impl App {
             self.pointer.drag,
             Drag::Splitter { .. }
                 | Drag::LogDivider { .. }
+                | Drag::LogBranches { .. }
+                | Drag::DiffFiles { .. }
                 | Drag::LogColumn { .. }
                 | Drag::SplitDivider { .. }
         ) || matches!(
@@ -908,7 +983,9 @@ impl App {
             Hover::Splitter
                 | Hover::SplitDivider
                 | Hover::Log(crate::app::git::log::LogTarget::Divider)
+                | Hover::Log(crate::app::git::log::LogTarget::BranchesEdge)
                 | Hover::Log(crate::app::git::log::LogTarget::AuthorEdge)
+                | Hover::Diff(crate::app::DiffTarget::FilesEdge)
         ) {
             CursorIcon::ColResize
         } else if matches!(
@@ -922,6 +999,7 @@ impl App {
                         | crate::app::preview::markdown::TocTarget::Pin
                 )
         ) || self.terminal.link.is_some()
+            || self.pointer.link.is_some()
         {
             // 提交图中的线可点击（沿线跳转）；终端中命令块的色带和吸顶的命令行同样可点击。
             CursorIcon::Pointer
@@ -953,6 +1031,10 @@ impl App {
 /// 窗口中某一点上最上层的可交互目标，见 [`App::target_at`]。
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Target {
+    /// 在文件中查找的对话框中的部位。
+    SearchDialog(crate::app::workspace::search_dialog::DialogPart),
+    /// 底部面板「搜索」标签中的部位。
+    SearchDock(crate::app::workspace::search_dialog::DialogPart),
     /// 遮挡下方但此处没有按钮的区域：提示条、卡片的空白处。
     ///
     /// 点击时不做任何操作，也不传给下方的部件。
@@ -972,6 +1054,12 @@ pub(super) enum Target {
     PdfThumb(f32),
     /// PDF 预览右下角工具栏上的按钮。
     PdfTool(crate::app::preview::pdf::PdfTool),
+    /// LaTeX 预览右上角的编译状态：点击列出各处错误。
+    LatexStatus,
+    /// 行号栏里 LaTeX 编译出错的红点：悬停说明错误，点击把光标移到这一行。
+    LatexProblem(usize),
+    /// 按住 ⌘ 点击编译出的 PDF：回到源码。
+    LatexSource,
     /// 跳转条，或正在输入名称的行。
     Prompt,
     Search,

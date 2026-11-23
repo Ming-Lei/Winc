@@ -3,6 +3,11 @@
 use super::*;
 use crate::app::vim::CaretShape;
 
+/// 返回光标竖线的矩形：宽 2，高为一行。
+pub(in crate::view) fn caret_rect(x: f32, y: f32, line_height: f32) -> Rect {
+    Rect::new(x, y, 2.0, line_height)
+}
+
 /// 返回 `y` 处开始、共 `rows` 段的一行中与 `clip` 相交的段（左闭右开）；`lh` 是行高。
 ///
 /// `y` 为 `f64`：长行的第一段可在屏幕之外数亿像素处，`f32` 分辨不出其中的各段。
@@ -120,7 +125,7 @@ fn clamp_lines(range: &Range<usize>, lines: &Range<usize>) -> Range<usize> {
 pub(super) fn draw_wrapped_selection(
     app: &App,
     frame: &mut Frame<'_>,
-    selection: Selection,
+    (selection, underline): (Selection, Option<Color>),
     segments: &[Range<usize>],
     origin_x: f32,
     row_y: &dyn Fn(usize) -> f64,
@@ -213,6 +218,10 @@ pub(super) fn draw_wrapped_selection(
     };
     for (i, &(y, span)) in rows.iter().enumerate() {
         let Some((x0, x1)) = span else { continue };
+        if let Some(color) = underline {
+            frame.rect_clipped(underline_rect(x0, x1, y, lh), color, 0.0, clip);
+            continue;
+        }
         let above = i.checked_sub(1).and_then(|j| rows[j].1);
         let below = rows.get(i + 1).and_then(|r| r.1);
         let radius = |covered: bool| if covered { 0.0 } else { RADIUS_SELECTION };
@@ -224,6 +233,11 @@ pub(super) fn draw_wrapped_selection(
         ];
         frame.rect_corners(Rect::new(x0, y, x1 - x0, lh), color, radii, clip);
     }
+}
+
+/// 返回一行中 `x0` 到 `x1` 一段文字的下划线：线宽 1 逻辑像素，距行底 2 逻辑像素。
+fn underline_rect(x0: f32, x1: f32, y: f32, line_height: f32) -> Rect {
+    Rect::new(x0, y + line_height - 2.0, x1 - x0, 1.0)
 }
 
 /// 返回选区的底色；编辑区没有键盘焦点时使用较淡的 `Palette::selection_inactive`。
@@ -245,7 +259,7 @@ fn selection_color(app: &App) -> Color {
 pub(super) fn draw_selection(
     app: &App,
     frame: &mut Frame<'_>,
-    selection: Selection,
+    (selection, underline): (Selection, Option<Color>),
     segments: &[Range<usize>],
     columns: Option<&Columns>,
     origin_x: f32,
@@ -340,6 +354,11 @@ pub(super) fn draw_selection(
         if !segments.iter().any(|r| r.contains(&line)) {
             continue;
         }
+        if let Some(color) = underline {
+            let rect = underline_rect(x0, x1, row_y(line), app.fonts.line_height);
+            frame.rect_clipped(rect, color, 0.0, clip);
+            continue;
+        }
 
         let above = i.checked_sub(1).and_then(|j| spans[j].1);
         let below = spans.get(i + 1).and_then(|s| s.1);
@@ -370,7 +389,7 @@ pub(in crate::view) fn draw_caret(
 
     if preedit.is_empty() {
         caret_bar(app, frame, x, y, clip);
-        return Rect::new(x, y, 2.0, app.fonts.line_height);
+        return caret_rect(x, y, app.fonts.line_height);
     }
 
     let chars: Vec<char> = preedit.chars().collect();
@@ -401,7 +420,7 @@ pub(in crate::view) fn draw_caret(
         0.0,
         clip,
     );
-    Rect::new(px, y, 2.0, app.fonts.line_height)
+    caret_rect(px, y, app.fonts.line_height)
 }
 
 /// 绘制 Vim 模式的光标：覆盖字符 `c` 的块、字符下方的横线，或空心的块。

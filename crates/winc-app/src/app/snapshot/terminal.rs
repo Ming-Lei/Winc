@@ -4,9 +4,11 @@
 mod blocks;
 mod editor;
 mod find;
+mod groups;
 mod input;
 mod run;
 mod shortcuts;
+mod split;
 mod tabs;
 
 use super::editor::navigation::press;
@@ -262,7 +264,7 @@ fn clicks_move_the_focus_and_the_gap_resizes_the_panel() {
         app.layout.window.y + crate::theme::ISLAND_MARGIN
     );
     assert_eq!(app.layout.terminal.bottom(), column_bottom);
-    // 同一次拖动中往回拖：松开吸附，从最小高度接着拖。
+    // 同一次拖动中往回拖：松开吸附，从最小高度继续拖。
     app.on_mouse_move(x, y + 100.0);
     app.on_mouse_up(MouseButton::Left);
     assert!(!app.terminal.maximized);
@@ -590,49 +592,6 @@ fn the_wheel_moves_rows_by_pixels_and_clicks_follow_them() {
     app.terminal_wheel(-lh * 0.5);
     let tab = app.terminal.tab().unwrap();
     assert!(tab.scroll_frac > 0.0 && tab.view_top() > 0);
-
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
-    let dir = sample_folder("terminal-tab-bar-gaps");
-    let mut app = app_with(&dir.join("short.rs"), false);
-    show_terminal(&mut app, "");
-    for _ in 0..20 {
-        add_tab(&mut app, "zsh", "");
-    }
-    app.terminal.active = 0;
-    paint(&mut app);
-    let card = app.layout.terminal;
-    let hit = |app: &App, wanted: terminal::HeaderHit| {
-        (app.hits.terminal.iter())
-            .find(|(_, hit)| *hit == wanted)
-            .map(|(rect, _)| *rect)
-            .unwrap()
-    };
-
-    // 标签放不下：第一个标签上、下、左的留白相同。
-    let tab = hit(&app, terminal::HeaderHit::Tab(0));
-    assert_eq!(tab.x - card.x, tab.y - card.y);
-    assert_eq!(tab.x - card.x, app.terminal_view().y - tab.bottom());
-    assert_eq!(tab.x - card.x, 5.0);
-
-    // 「+」、运行、最大化、切换位置、收起五个按钮间距相同，尺寸和间距与编辑区标签栏一致。
-    let new = hit(&app, terminal::HeaderHit::New);
-    let run = hit(
-        &app,
-        terminal::HeaderHit::Run(terminal::run::RunButton::Start),
-    );
-    let maximize = hit(&app, terminal::HeaderHit::Maximize);
-    let position = hit(&app, terminal::HeaderHit::Position);
-    let hide = hit(&app, terminal::HeaderHit::Hide);
-    assert_eq!(run.x - new.right(), crate::theme::TAB_GAP);
-    assert_eq!(maximize.x - run.right(), crate::theme::TAB_GAP);
-    assert_eq!(position.x - maximize.right(), crate::theme::TAB_GAP);
-    assert_eq!(hide.x - position.right(), crate::theme::TAB_GAP);
-    assert_eq!(new.w, crate::theme::BUTTON);
-    assert_eq!(card.right() - hide.right(), 8.0);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1221,7 +1180,7 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     );
 
     // 现场记下：默认 shell 的是空的。
-    let session = app.terminal_session().unwrap();
+    let session = app.terminal_session_with_tabs(&[]).unwrap();
     assert_eq!(session.shells, ["", "/bin/bash"]);
 
     // 异常退出的标签留着，重新启动后还是这个 shell（正常退出的标签直接关闭）。

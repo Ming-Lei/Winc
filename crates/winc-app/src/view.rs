@@ -72,7 +72,11 @@ pub(crate) fn base(app: &App) -> [(Rect, Color); 3] {
 
 /// 绘制编辑区；差异和日志的点击区域裁剪在编辑区内，包括终端最大化后的零宽、零高区域。
 fn draw_editor(app: &mut App, frame: &mut Frame<'_>) {
-    editor::draw_editor(app, frame);
+    if app.editor.active().is_some_and(|doc| doc.terminal) {
+        terminal::draw_editor_terminal(app, frame);
+    } else {
+        editor::draw_editor(app, frame);
+    }
     for (rect, _) in &mut app.hits.diff {
         *rect = rect.intersect(app.layout.editor);
     }
@@ -108,6 +112,18 @@ fn draw_pane_dividers(app: &App, frame: &mut Frame<'_>) {
 /// 标签栏上时画出插入处的竖线。
 fn draw_tab_drop(app: &App, frame: &mut Frame<'_>) {
     use crate::app::workspace::panes::TabDrop;
+    if let Some((drop, area)) = app.editor_terminal_panel_drop(&app.tabs_dragged_out()) {
+        if matches!(
+            drop,
+            crate::app::terminal::groups::GroupDrop::Into { at: Some(_), .. }
+        ) {
+            frame.rect(area, app.palette.accent);
+        } else {
+            let area = area.inset(6.0, 6.0);
+            frame.rect_clipped(area, app.palette.drop_target, RADIUS_ISLAND - 4.0, area);
+        }
+        return;
+    }
     match app.panes.drop {
         Some((TabDrop::Into { at: Some(_), .. }, line)) => {
             frame.rect(line, app.palette.accent);
@@ -161,6 +177,8 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     // 拆分后最后画前台窗格：浮层和各区域记下的位置都是它的。
     app.draw_panes(|app, front| draw_pane(app, frame, front));
     draw_pane_dividers(app, frame);
+    // 窗格增减后，变化之前的画面在新布局上淡出。
+    app.draw_pane_motion(frame);
     draw_tab_drop(app, frame);
     // 最大化、还原途中面板盖在编辑区上面：编辑区的圆角先修整好，面板再画在上面。
     let covered = app.terminal.grow.is_some();
@@ -191,6 +209,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
 
     // 位置浮窗显示在名称旁边，有独立的动画（滑出、淡出）。
     let bar_open = app.bars.goto_input.is_some() && !app.bars.prompt_kind.is_vim();
+    app.hits.prompt_bar = app.bars.goto_input.is_some().then(|| app.prompt_bar());
     let picker_open = app.overlays.picker.open && app.overlays.picker.places.is_none();
     app.track_card(Card::Bar, bar_open);
     app.track_card(Card::Picker, picker_open);
@@ -211,6 +230,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
     }
 
     editor::hint::draw_name_hint(app, frame);
+    workspace::tab_switch::draw(app, frame);
 
     draw_notices(app, frame);
 
@@ -228,7 +248,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
 
-    // 设置浮层盖住整个窗口（侧栏、编辑区、状态栏）；绘制后直接返回，不再绘制主界面的悬停提示。
+    // 设置浮层遮住整个窗口（侧栏、编辑区、状态栏）；绘制后直接返回，不再绘制主界面的悬停提示。
     // 关闭后淡出期间仍继续绘制（`SettingsState::motion`）。
     if app.settings.open {
         settings::draw(app, frame);
@@ -317,14 +337,7 @@ fn draw_island_corners(app: &App, frame: &mut Frame<'_>, editor: bool) {
 
 /// 修整编辑区卡片（顶栏那一行连同下面的编辑区）的四角，见 [`draw_island_corners`]。
 fn round_editor_corners(app: &App, frame: &mut Frame<'_>) {
-    let l = &app.layout;
-    let editor = Rect::new(
-        l.top_bar.x,
-        l.top_bar.y,
-        l.top_bar.w,
-        l.editor.bottom() - l.top_bar.y,
-    );
-    frame.round_corners(editor, RADIUS_ISLAND, app.palette.frame_bg);
+    frame.round_corners(app.editor_card(), RADIUS_ISLAND, app.palette.frame_bg);
 }
 
 /// 拖动文件经过窗口时，为松手后接收该文件的终端面板或编辑区（含标签栏）绘制放置目标底色。
@@ -340,12 +353,7 @@ fn draw_file_drop(app: &App, frame: &mut Frame<'_>) {
             };
             area
         }
-        Some(DropZone::Open(None)) => Rect::new(
-            l.top_bar.x,
-            l.top_bar.y,
-            l.top_bar.w,
-            l.editor.bottom() - l.top_bar.y,
-        ),
+        Some(DropZone::Open(None)) => app.editor_card(),
         Some(DropZone::Tree(_)) | None => return,
     };
     let area = area.inset(6.0, 6.0);
@@ -385,33 +393,46 @@ fn draw_tab_drag(app: &App, frame: &mut Frame<'_>) {
         1 => ellipsize(frame, &file, app.fonts.ui, 240.0),
         n => Cow::Owned(t!("workspace-tree-drag-items", count = n)),
     };
-    let (card, icon_x, cy) = draw_drag_card(app, frame, name);
-    draw_file_icon(frame, app.palette, (icon_x + 1.5, cy), &file, card);
+    let (card, icon_x, cy) = if doc.terminal {
+        draw_move_card(app, frame, &name)
+    } else {
+        draw_drag_card(app, frame, name)
+    };
+    if doc.terminal {
+        icons::terminal(frame, (icon_x + 6.0, cy), app.palette.text_muted, card);
+    } else {
+        draw_file_icon(frame, app.palette, (icon_x + 1.5, cy), &file, card);
+    }
 }
 
 /// 在鼠标右下方画拖动时的卡片和名称 `name`（按住 `⌥` 时注明复制），返回卡片、图标的横坐标和
 /// 中线。
 fn draw_drag_card(app: &App, frame: &mut Frame<'_>, name: Cow<'_, str>) -> (Rect, f32, f32) {
-    let p = app.palette;
-    let window = app.layout.window;
-    let (x, y) = app.mouse();
     // 按住 ⌥ 松开时执行复制。
     let name = if app.pointer.modifiers.alt_key() {
         Cow::Owned(t!("workspace-tree-drag-copy", name = name.as_ref()))
     } else {
         name
     };
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &name) + 40.0;
+    draw_move_card(app, frame, &name)
+}
+
+/// 在鼠标右下方画拖动时的卡片和名称 `name`，不注明复制；返回值同 [`draw_drag_card`]。
+fn draw_move_card(app: &App, frame: &mut Frame<'_>, name: &str) -> (Rect, f32, f32) {
+    let p = app.palette;
+    let window = app.layout.window;
+    let (x, y) = app.mouse();
+    let w = frame.measure(FontKind::Ui, app.fonts.ui, name) + 40.0;
     let card = Rect::new(
         (x + 14.0).min(window.right() - w - 4.0),
-        y + 10.0,
+        (y + 10.0).min(window.bottom() - TREE_ROW - 4.0),
         w,
         TREE_ROW,
     );
     draw_card(frame, p, card, RADIUS_ROW, p.popup_bg);
     let cy = icon_center_y(app, card, app.fonts.ui);
     let icon_x = card.x + 12.0;
-    ui_text(frame, app, icon_x + 18.0, card, &name, p.text, card);
+    ui_text(frame, app, icon_x + 18.0, card, name, p.text, card);
     (card, icon_x, cy)
 }
 
@@ -505,13 +526,9 @@ fn marked_label(
 
 /// 绘制输入框的外框：平时没有边框，只在底色 `base` 上铺一层略深的中性色。
 ///
-/// 有焦点时改为编辑区底色并加一圈强调色外环，出错时外环为错误色。侧栏的搜索框、提交信息框和
-/// 日志标签的筛选框共用该函数。输入框不加边框：接近白色的侧栏上叠加多个浅色边框时层次混乱，
-/// 只保留一层底色时层次更清楚。
-///
-/// 外环宽度为整数个物理像素（缩放倍数四舍五入，至少为 1）：输入框四边先对齐到物理像素，再向外
-/// 扩出外环。缩放倍数不是整数（系统缩放 125%、界面缩放 110% 等）时，若按逻辑像素外扩 1，四边
-/// 各自取整后宽度在 0 到 2 个物理像素之间，宽度不一致。
+/// 有焦点时改为编辑区底色并加一圈强调色外环，出错时外环为错误色。侧栏的搜索框、提交信息框和日志标签
+/// 的筛选框共用该函数。外环宽度为整数个物理像素（缩放倍数四舍五入，至少为 1）：输入框四边先对齐到
+/// 物理像素，再向外扩出外环，缩放倍数不是整数时四边的宽度才一致。
 fn field_box(
     app: &App,
     frame: &mut Frame<'_>,
@@ -550,12 +567,11 @@ fn sidebar_span(app: &App) -> Rect {
 
 /// 绘制列表为空时（没有结果、没有更改、尚无提交）的说明文字。
 ///
-/// 标题一行使用正文字号和次要色，下方可附一行淡色小字作补充，放不下时按宽度折行。整块在
-/// `span`（纵向范围）内上下居中，中线位于 `span` 高度的 45% 处，列表很矮时顶部至少留
-/// 16 逻辑像素。
+/// 标题一行使用正文字号和次要色，下方可附一行淡色小字作补充，放不下时按宽度折行。整块在 `span`（纵
+/// 向范围）内上下居中，中线位于 `span` 高度的 45% 处，列表很矮时顶部至少留 16 逻辑像素。
 ///
-/// 居中参照 `span` 而非各自的列表：各视图的列表起始高度不同，按列表居中会使切换视图时说明
-/// 文字上下跳动。返回最后一行的下沿，供调用方在说明下方继续排列按钮。
+/// 居中参照 `span` 而非各自的列表：各视图的列表起始高度不同，按列表居中会使切换视图时说明文字上下跳
+/// 动。返回最后一行的下沿，供调用方在说明下方继续排列按钮。
 fn draw_empty_state(
     app: &App,
     frame: &mut Frame<'_>,
@@ -596,11 +612,8 @@ fn draw_empty_state(
 /// 在 `rect` 内垂直居中绘制一段字号为 `size`、没有小写字母的界面文本，返回文本末尾的 x 坐标。
 ///
 /// 用于独自放在小框里的快捷键（⌘⇧F）、项目首字母、数字：按大写字母的高度居中（数字与大写字母
-/// 等高）。[`label`] 的视觉中心计入了小写字母的中心，此类文本按其居中会偏高约半个像素。
-/// 在一行内与普通文字并列的文本（状态栏、查找条的计数）仍用 [`label`]，与普通文字共用基线。
-///
-/// 含中日韩文字的文本（「双击」、姓名首字）按 [`label`] 的视觉中心居中：这些字的中心低于大写
-/// 字母的中心，按大写字母高度居中会偏低约 1 像素。
+/// 等高）。在一行内与普通文字并列的文本（状态栏、查找条的计数）以及含中日韩文字的文本（「双击」、
+/// 姓名首字）仍用 [`label`]，按其视觉中心居中。
 fn caps_label(
     frame: &mut Frame<'_>,
     app: &App,

@@ -84,6 +84,9 @@ fn draw_surface(app: &mut App, frame: &mut Frame<'_>) -> Option<usize> {
         // 欢迎页（常用操作及其快捷键）。
         if app.editor.workspace.is_none() {
             workspace::start::draw(app, frame);
+        } else if app.restoring_tabs() {
+            let area = app.layout.editor;
+            draw_waiting(app, frame, area, t!("workspace-restoring-tabs"));
         } else {
             draw_welcome(app, frame);
         }
@@ -231,6 +234,10 @@ fn draw_surface(app: &mut App, frame: &mut Frame<'_>) -> Option<usize> {
     }
     if app.editor.documents[index].log.is_some() {
         super::git::log::draw_log(app, frame, index);
+        return None;
+    }
+    if app.combined_active() {
+        diff::combined::draw_combined(app, frame, index);
         return None;
     }
     if app.editor.documents[index].hex.is_some() {

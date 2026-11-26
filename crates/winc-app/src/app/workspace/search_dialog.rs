@@ -1,11 +1,11 @@
-//! 在文件中查找的对话框：标题行是标题、结果统计，右端是范围（整个项目或当前文件所在的目录）、
-//! 「在底部显示」和关闭按钮；下面依次是查询框（右端是搜索选项和「过滤」）、文件掩码、各处匹配和
-//! 选中处的上下文。拖动标题行的空白处移动、拖动边缘改变大小，按 Esc、关闭按钮或打开一处结果时
-//! 关闭。
+//! 在文件中查找的对话框：标题行是标题、结果统计，右端是范围（整个项目或当前文件所在的目录）、「在底
+//! 部显示」和关闭按钮；下面依次是查询框（右端是搜索选项和「过滤」）、文件掩码、各处匹配和选中处的上
+//! 下文。拖动标题行的空白处移动、拖动边缘改变大小，按 Esc、关闭按钮或打开一处结果时关闭。
 //!
-//! 「在底部显示」把结果放进底部面板的「搜索」标签：顶部一行是查询和结果统计，左边是各处匹配，
-//! 右边是选中处的上下文，与对话框共用查询、结果和选中项；面板标题栏上的「在对话框中打开」回到
-//! 对话框。
+//! 「在底部显示」把结果放进底部面板的「搜索」标签：顶部一行是查询和结果统计，左边是各处匹配，右边是
+//! 选中处的上下文，与对话框共用查询、结果和选中项；面板标题栏上的「在对话框中打开」回到对话框。
+
+mod rows;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -13,6 +13,7 @@ use std::time::Instant;
 use winc_editor::{ProjectSearch, Query};
 use winc_i18n::t;
 use winc_render::Rect;
+use winc_syntax::LineState;
 
 use super::global::SEARCH_DELAY;
 use super::picker::PICKER_ROW;
@@ -23,6 +24,18 @@ use crate::layout::{PanelButton, PickerParts};
 /// 对话框中输入框和预览标题行的高度（逻辑像素）。
 const FIELD_H: f32 = 28.0;
 const PREVIEW_HEAD: f32 = 30.0;
+/// 卡片顶边到标题行里按钮的距离（逻辑像素）；标题行下面、输入框下面也留这么多。
+const INSET: f32 = 12.0;
+/// 卡片左右两边到内容的距离（逻辑像素），同其他对话框：输入框的边框、列表和预览中选中一行的
+/// 底色、标题的左边、关闭按钮里叉的右边都在这条线上。
+pub(crate) const SIDE: f32 = crate::theme::SETTINGS_PAD;
+/// 快速打开面板的一行里，底色比行缩进的距离（逻辑像素，见 `draw_rows`）。
+const ROW_INSET: f32 = 6.0;
+/// 输入的文字、列表和预览的文件图标共用的左边（离卡片左边，逻辑像素）：输入框的边框往里
+/// 8，列表的图标在行里缩进 `PICKER_ICON_X`。
+const TEXT_X: f32 = SIDE - ROW_INSET + crate::app::PICKER_ICON_X;
+/// 关闭按钮里叉的边长（逻辑像素）。
+pub(crate) const CLOSE_MARK: f32 = 7.0;
 /// 范围分段控件中一段的宽度（逻辑像素）。
 const SEGMENT_W: f32 = 72.0;
 /// 预览区上下的留白（逻辑像素）。
@@ -64,8 +77,11 @@ pub enum DialogPart {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DialogParts {
     pub card: Rect,
-    /// 标题行：左边是标题和结果统计，右端依次是范围、「在底部显示」和关闭按钮。
+    /// 标题行：按住可以拖动对话框，从卡片顶边到 `bar` 的下沿。
     pub header: Rect,
+    /// 标题行里放标题、结果统计和按钮的一条：左边是标题和结果统计，右端依次是范围、「在底部
+    /// 显示」和关闭按钮。
+    pub bar: Rect,
     pub close: Rect,
     pub dock: Rect,
     /// 范围分段控件的底槽和其中的两段（整个项目、当前文件所在的目录）。
@@ -109,12 +125,14 @@ pub struct SearchDialog {
     /// 列出的条目序号（全部条目）。
     pub(crate) hits: Vec<usize>,
     /// 各条目匹配的长度（字符）。
-    lens: Vec<usize>,
+    pub(crate) lens: Vec<usize>,
     version: Option<u64>,
     pub(crate) selected: usize,
     pub(crate) scroll: f32,
     /// 预览区的内容，见 [`Context`]。
     context: Option<Context>,
+    /// 结果各行的高亮状态，见 [`rows::RowStates`]。
+    pub(crate) rows: rows::RowStates,
     /// 新的搜索还没有结果，列出的仍是上一次的结果（淡色显示）。
     pub(crate) stale: bool,
     /// 上一次的结果换成新的结果时回到第一条。
@@ -134,7 +152,14 @@ struct Context {
     /// 首行的行号。
     first: usize,
     lines: Vec<String>,
+    /// 首行行首的高亮状态：跨行的结构（块注释、Vue 的 `<script>`）中的行据此着色。
+    state: LineState,
 }
+
+/// 预览没有打开的文件时，从文件开头推算高亮状态的行数上限（行）：与编辑区每帧推算的上限相同，
+/// 约一次屏幕刷新的耗时。更靠后的行从上方几百行处推算
+/// （见 [`winc_editor::line_highlight_states`]）。
+pub(super) const CONTEXT_STATE_BUDGET: usize = 4_000;
 
 /// 底部面板「搜索」标签中各部件的位置。
 #[derive(Debug, Clone, Copy)]
@@ -151,6 +176,12 @@ pub(crate) struct DockParts {
 }
 
 impl SearchDialog {
+    /// 测试用：丢掉预览区的缓存，下一次重新读取。
+    #[cfg(test)]
+    pub(crate) fn context_forget(&mut self) {
+        self.context = None;
+    }
+
     fn query_of(&self) -> Query {
         Query {
             text: self.query.text().to_owned(),
@@ -181,10 +212,10 @@ impl App {
         })
     }
 
-    /// 打开对话框：有合适的选区（没有选区时为光标所在的词）时用它作为查询，否则沿用上次的查询；
-    /// 查询全选，焦点放进输入框。
+    /// 打开对话框：焦点在编辑区、有合适的选区（没有选区时为光标所在的词）时用它作为查询，否则
+    /// 沿用上次的查询（见 [`Self::files_search_seed`]）；查询全选，焦点放进输入框。
     pub(in crate::app) fn open_search_dialog(&mut self) {
-        let seed = self.search_seed();
+        let seed = self.files_search_seed();
         self.open_search_dialog_with(seed);
     }
 
@@ -265,6 +296,7 @@ impl App {
 
     /// 按对话框中的查询从头搜索整个目录；查询为空时清空结果。
     fn run_search_dialog(&mut self) {
+        self.search_dialog.rows.reset();
         let Some(mut root) = self.editor.root().map(std::path::Path::to_path_buf) else {
             return;
         };
@@ -307,6 +339,17 @@ impl App {
         let running = d.engine.is_running();
         d.engine.poll();
         self.sync_search_dialog(false);
+        // 列表显示在对话框里或底部面板中时，推算看得到的各行的高亮状态。
+        let list = match self.docked_parts() {
+            Some(dock) if self.search_dialog.docked => Some(dock.list.list),
+            _ => self
+                .search_dialog
+                .open
+                .then(|| self.search_dialog_parts().list.list),
+        };
+        if let Some(list) = list {
+            self.advance_row_states(list.h);
+        }
         running.then_some(now + crate::app::GLOBAL_POLL)
     }
 
@@ -318,7 +361,7 @@ impl App {
             return;
         }
         d.version = Some(version);
-        // 新的搜索还没有结果时留着上一次的结果，避免列表先空一下再出现。
+        // 新的搜索还没有结果时留着上一次的结果，避免列表先变空再出现。
         let waiting = d.engine.is_running() && d.engine.results.is_empty();
         if waiting && !d.hits.is_empty() {
             d.stale = true;
@@ -385,6 +428,9 @@ impl App {
     /// 把结果放进底部面板的「搜索」标签并关闭对话框（`⌘↩`，Windows、Linux 上为 `Ctrl+↩`）。
     pub(in crate::app) fn dock_search_results(&mut self) {
         self.close_search_dialog();
+        // 「搜索」标签在第一栏的标签栏上。
+        let group = self.ensure_terminal_panel_group();
+        self.focus_terminal_group(group);
         let d = &mut self.search_dialog;
         d.docked = true;
         d.in_panel = true;
@@ -403,6 +449,8 @@ impl App {
 
     /// 在底部面板中显示「搜索」标签，焦点放进结果列表。
     pub(in crate::app) fn show_docked_search(&mut self) {
+        let group = self.ensure_terminal_panel_group();
+        self.focus_terminal_group(group);
         self.search_dialog.in_panel = true;
         self.focus = Focus::SearchDock;
         self.request_redraw();
@@ -416,7 +464,7 @@ impl App {
         if self.focus_in_docked_search() {
             self.focus = Focus::Editor;
         }
-        if self.terminal.tabs.is_empty() && self.terminal.want.is_empty() {
+        if self.terminal.panel_tab_count() == 0 && self.terminal.want.is_empty() {
             self.set_terminal_open(false);
         }
         self.relayout();
@@ -603,28 +651,34 @@ impl App {
     }
 
     /// 返回对话框各部件的位置。
+    ///
+    /// 左右两边对齐在 [`SIDE`]：输入框的边框、列表和预览中选中一行的底色、标题的左边和关闭按钮
+    /// 里叉的右边；输入的文字、列表和预览的图标在它往里的同一列（[`TEXT_X`]）。顶边到标题行、
+    /// 标题行到输入框、输入框到列表都隔 [`INSET`]。
     pub(crate) fn search_dialog_parts(&self) -> DialogParts {
         use crate::app::PICKER_PAD;
-        use crate::theme::{BUTTON, BUTTON_GAP, DIALOG_GAP, SETTINGS_HEADER, SETTINGS_PAD};
+        use crate::theme::{BUTTON, BUTTON_GAP, DIALOG_GAP};
         let card = self.search_dialog_rect();
         let row = |y: f32, h: f32| Rect::new(card.x, y, card.w, h);
-        let (x, w) = (
-            card.x + SETTINGS_PAD,
-            (card.w - 2.0 * SETTINGS_PAD).max(0.0),
-        );
-
-        // 标题行右端从右往左：关闭、「在底部显示」、范围。
-        let header = row(card.y, SETTINGS_HEADER);
-        let button = |right: f32| {
-            let y = header.y + (header.h - BUTTON) / 2.0;
-            Rect::new(right - BUTTON, y, BUTTON, BUTTON)
+        // 列表、预览按快速打开面板的行排：行的底色从行内缩进 6，这里让行本身缩进 `SIDE - 6`。
+        let lane = |y: f32, h: f32| {
+            let inset = SIDE - ROW_INSET;
+            Rect::new(card.x + inset, y, (card.w - 2.0 * inset).max(0.0), h)
         };
-        let close = button(card.right() - 12.0);
-        let dock = button(close.x - 4.0);
+        let (x, w) = (card.x + SIDE, (card.w - 2.0 * SIDE).max(0.0));
+
+        // 标题行（按住可以拖动）从卡片顶边算起，标题和按钮在离顶边 `INSET` 的一条里；右端从右
+        // 往左：关闭、「在底部显示」、范围。
+        let header = row(card.y, INSET + BUTTON);
+        let bar = row(card.y + INSET, BUTTON);
+        let button = |right: f32| Rect::new(right - BUTTON, bar.y, BUTTON, BUTTON);
+        // 叉的右边对齐在 `SIDE`，按钮的悬停底色伸进边距。
+        let close = button(card.right() - SIDE + (BUTTON - CLOSE_MARK) / 2.0);
+        let dock = button(close.x - BUTTON_GAP);
         let track_w = SEGMENT_W * 2.0 + 4.0;
         let track = Rect::new(
-            dock.x - 12.0 - track_w,
-            header.y + (header.h - FIELD_H) / 2.0,
+            dock.x - 8.0 - track_w,
+            bar.y + (bar.h - FIELD_H) / 2.0,
             track_w,
             FIELD_H,
         );
@@ -635,17 +689,18 @@ impl App {
         let scopes = [segment(0.0), segment(1.0)];
 
         // 查询框内靠右依次是三个开关和「过滤」，都是正方形。
-        let query_row = Rect::new(x, header.bottom(), w, FIELD_H);
+        let query_row = Rect::new(x, bar.bottom() + DIALOG_GAP, w, FIELD_H);
         let side = FIELD_H - 6.0;
         let square = |right: f32| Rect::new(right - side, query_row.y + 3.0, side, side);
         let mask_toggle = square(query_row.right() - 3.0);
         let regex = square(mask_toggle.x - BUTTON_GAP);
         let word = square(regex.x - BUTTON_GAP);
         let case = square(word.x - BUTTON_GAP);
+        let text_x = card.x + TEXT_X;
         let query = Rect::new(
-            x + 10.0,
+            text_x,
             query_row.y,
-            (case.x - 8.0 - x - 10.0).max(0.0),
+            (case.x - 8.0 - text_x).max(0.0),
             FIELD_H,
         );
         let mask_h = if self.search_dialog.mask_on {
@@ -656,28 +711,30 @@ impl App {
         let mask = Rect::new(x, query_row.bottom() + DIALOG_GAP, w, mask_h);
         let fields = if mask_h > 0.0 { mask } else { query_row };
 
-        // 输入框下面隔一条分隔线是各处匹配，再下面是预览，一直到卡片底边。
-        let top = fields.bottom() + 14.0;
+        // 输入框下面隔一条分隔线是各处匹配，再下面是预览，一直到卡片底边：预览同编辑区一样，
+        // 放不下的最后一行露出一部分，底下不留成段的空白。
+        let top = fields.bottom() + INSET;
         let bottom = card.bottom() - RADIUS_CARD / 2.0;
-        // 列表放整数行，不露出半行。
-        let rows = (((bottom - top) * 0.42 - 2.0 * PICKER_PAD) / PICKER_ROW)
+        // 列表和预览平分剩下的高度；列表放整数行，不露出半行，零头归预览。
+        let rows = (((bottom - top) / 2.0 - 2.0 * PICKER_PAD) / PICKER_ROW)
             .floor()
             .max(1.0);
         let list_h = rows * PICKER_ROW + 2.0 * PICKER_PAD;
         let list = PickerParts {
-            bar: row(top, 0.0),
-            actions: row(top, 0.0),
-            list: row(top + PICKER_PAD, (list_h - 2.0 * PICKER_PAD).max(0.0)),
-            footer: row(top + list_h, 0.0),
+            bar: lane(top, 0.0),
+            actions: lane(top, 0.0),
+            list: lane(top + PICKER_PAD, (list_h - 2.0 * PICKER_PAD).max(0.0)),
+            footer: lane(top + list_h, 0.0),
         };
-        let preview_head = row(top + list_h, PREVIEW_HEAD);
-        let preview = row(
+        let preview_head = lane(top + list_h, PREVIEW_HEAD);
+        let preview = lane(
             preview_head.bottom(),
             (bottom - preview_head.bottom()).max(0.0),
         );
         DialogParts {
             card,
             header,
+            bar,
             close,
             dock,
             track,
@@ -701,7 +758,8 @@ impl App {
             .then(|| self.search_dialog_parts().preview.h);
         let dock = self.docked_parts().map(|dock| dock.preview.h);
         let h = dialog.into_iter().chain(dock).fold(0.0, f32::max) - 2.0 * PREVIEW_PAD;
-        (h / self.fonts.line_height).floor().max(1.0) as usize
+        // 最后一行可能只露出一部分，也要取来（见 `draw_context`）。
+        (h / self.fonts.line_height).ceil().max(1.0) as usize
     }
 
     /// 返回 (`x`, `y`) 处的部位；不在对话框上时返回 `None`。
@@ -875,8 +933,11 @@ impl App {
         self.request_redraw();
     }
 
-    /// 返回选中的一处周围的几行（选中的行号、首行的行号、各行文字），按需从文档或磁盘读取并缓存。
-    pub(crate) fn search_dialog_context(&mut self) -> Option<(usize, usize, Vec<String>)> {
+    /// 返回选中的一处周围的几行（选中的行号、首行的行号、各行文字、首行行首的高亮状态），按需
+    /// 从文档或磁盘读取并缓存。
+    pub(crate) fn search_dialog_context(
+        &mut self,
+    ) -> Option<(usize, usize, Vec<String>, LineState)> {
         let d = &self.search_dialog;
         let place = d.places.as_ref()?.items.get(d.selected)?;
         let key = (place.path.clone(), place.line);
@@ -884,23 +945,46 @@ impl App {
         // 按要取的行数（而不是取到的行数）判断缓存是否够用。
         let cached = (d.context.as_ref()).filter(|c| c.at == key && c.taken >= count);
         if let Some(c) = cached {
-            return Some((c.at.1, c.first, c.lines.clone()));
+            // 上次没有读到内容的也记着（各行为空）：不在每一帧重新读取。
+            return (!c.lines.is_empty()).then(|| (c.at.1, c.first, c.lines.clone(), c.state));
         }
         let first = key.1.saturating_sub(count / 2);
-        let open = (self.editor.documents.iter()).find(|doc| doc.path.as_ref() == Some(&key.0));
-        let lines: Vec<String> = match open {
+        let open = (self.editor.documents.iter_mut()).find(|doc| doc.path.as_ref() == Some(&key.0));
+        let (lines, state): (Vec<String>, LineState) = match open {
             Some(doc) => {
+                let state = (doc.highlight_state(first, CONTEXT_STATE_BUDGET))
+                    .unwrap_or_else(|| doc.approx_highlight_state(first));
                 let text = doc.text();
-                (first..(first + count).min(text.line_count()))
+                let lines = (first..(first + count).min(text.line_count()))
                     .map(|l| text.line_content(l).slice().to_string())
-                    .collect()
+                    .collect();
+                (lines, state)
             }
-            None => String::from_utf8_lossy(&winc_backend::fs::read(&key.0).ok()?)
-                .lines()
-                .skip(first)
-                .take(count)
-                .map(str::to_owned)
-                .collect(),
+            // 过大的文件不为几行预览读进内存；读不到的与之相同，记为没有内容。
+            None => {
+                let small = |m: winc_backend::fs::Metadata| m.len <= winc_editor::LARGE_FILE;
+                let bytes = (winc_backend::fs::metadata(&key.0).is_ok_and(small))
+                    .then(|| winc_backend::fs::read(&key.0).ok())
+                    .flatten()
+                    .unwrap_or_default();
+                let text = String::from_utf8_lossy(&bytes);
+                let lines = text.lines().skip(first).take(count);
+                let lines = lines.map(str::to_owned).collect();
+                let language = winc_syntax::detect(&winc_editor::display_name(&key.0));
+                // 推算只用到首行之前的内容。
+                let end = match first {
+                    0 => 0,
+                    n => (text.match_indices('\n').nth(n - 1)).map_or(text.len(), |(i, _)| i + 1),
+                };
+                let rope = ropey::Rope::from_str(&text[..end]);
+                let state = winc_editor::line_highlight_states(
+                    &rope,
+                    language,
+                    &[first],
+                    CONTEXT_STATE_BUDGET,
+                );
+                (lines, state[0])
+            }
         };
         let line = key.1;
         self.search_dialog.context = Some(Context {
@@ -908,8 +992,9 @@ impl App {
             taken: count,
             first,
             lines: lines.clone(),
+            state,
         });
-        Some((line, first, lines))
+        (!lines.is_empty()).then_some((line, first, lines, state))
     }
 }
 

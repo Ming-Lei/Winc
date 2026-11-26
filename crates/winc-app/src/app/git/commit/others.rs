@@ -8,6 +8,8 @@ use std::sync::PoisonError;
 
 use super::*;
 use crate::app::NoticeKind;
+use crate::app::git::DiffKind;
+use crate::app::git::diffs::Target;
 
 /// 多仓库时其他仓库一节里的一组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +50,7 @@ pub(crate) enum OtherRow {
     Current,
     /// 另一个仓库的标题行：该仓库在仓库列表（`GitState::repositories`）中的下标。
     Repository(usize),
-    /// 没有更改的另一个仓库：只有这一行，写着它的分支和与上游的差异。
+    /// 没有更改的另一个仓库：只有这一行，显示它的分支和与上游的差异。
     Quiet(usize),
     /// 没有更改的各仓库一组的标题行；展开时其下每个仓库一行。
     QuietGroup,
@@ -169,11 +171,10 @@ impl App {
     /// 返回多仓库时当前仓库那一节以外的各行，按仓库列表的顺序；当前仓库的位置是一行
     /// [`OtherRow::Current`]，它的改动列表画在那一行下面。不列出其他仓库时为空。
     ///
-    /// 有更改的仓库一行标题，其下按组列出文件，两部分都有内容的文件在暂存区视图的两组中各列
-    /// 一次；折叠的仓库、组只有标题行。没有更改的仓库只有一行，状态尚未读到的仓库只有标题行。
+    /// 有更改的仓库一行标题，其下按组列出文件，两部分都有内容的文件在暂存区视图的两组中各列一次；
+    /// 折叠的仓库、组只有标题行。没有更改的仓库只有一行，状态尚未读到的仓库只有标题行。
     ///
-    /// 每帧要用好几次（排行、铺卡片、算滚动），按决定它的各项缓存（[`OtherRowsKey`]），没变时
-    /// 不再锁各仓库的状态重排。
+    /// 每帧要用多次，按决定它的各项缓存（[`OtherRowsKey`]），没变时不再锁各仓库的状态重排。
     pub(crate) fn commit_other_rows(&self) -> Vec<OtherRow> {
         if !self.commit_shows_others() {
             return Vec::new();
@@ -548,7 +549,7 @@ impl App {
     /// 打开或关闭「显示全部仓库」；所有窗口共用，下次启动沿用。
     pub(in crate::app) fn toggle_all_repositories(&mut self) {
         let on = !self.commit_all_repositories();
-        self.update_state(|state| state.commit_all_repositories = Some(on));
+        self.update_state(move |state| state.commit_all_repositories = Some(on));
         if on {
             self.git_read_summaries();
         }
@@ -556,19 +557,20 @@ impl App {
         self.request_redraw();
     }
 
-    /// 点了其他仓库的标题行或文件：切换到该仓库，点的是文件时选中它并预览差异。
+    /// 点击其他仓库的标题行：切换到该仓库；点击文件：选中该文件并预览差异，不切换仓库（见
+    /// [`App::select_other_file`]）。
     pub(super) fn press_other(&mut self, target: CommitTarget) {
-        let (repo, entry) = match target {
-            CommitTarget::OtherRepository(repo) => (repo, None),
-            CommitTarget::OtherFile(repo, entry) | CommitTarget::OtherStagedFile(repo, entry) => {
-                (repo, Some(entry))
+        let repo = match target {
+            CommitTarget::OtherRepository(repo) => repo,
+            CommitTarget::OtherFile(repo, entry) => {
+                let side = self.git.commit.staging().then_some(false);
+                return self.select_other_file((repo, entry), side);
+            }
+            CommitTarget::OtherStagedFile(repo, entry) => {
+                return self.select_other_file((repo, entry), Some(true));
             }
             _ => return,
         };
-        let path = entry.and_then(|entry| {
-            let path = |status: &Status| status.entries.get(entry).map(|e| e.path.clone());
-            self.other_status(repo, |_, status| path(status)).flatten()
-        });
         // 切换仓库会重置滚动位置：按原位置和标题行移动的距离恢复，点击的标题行位置不变。
         let header = [OtherRow::Repository(repo), OtherRow::Quiet(repo)];
         let before = header.into_iter().find_map(|h| self.other_row_offset(h));
@@ -580,10 +582,120 @@ impl App {
         };
         self.git.commit.scroll = (scroll + moved).max(0.0);
         self.focus = Focus::CommitList;
-        if let Some(path) = path {
-            self.select_commit_file(path);
+        self.request_redraw();
+    }
+
+    /// 点击第 `repo` 个仓库中的第 `entry` 个文件：选中该文件并在预览标签中比较差异，不切换当前
+    /// 仓库；双击时打开文件。`side` 是暂存区视图中这一行所在的部分（`Some(true)` 为已暂存），
+    /// 勾选式下为 `None`，决定比较哪两份内容。
+    fn select_other_file(&mut self, (repo, entry): (usize, usize), side: Option<bool>) {
+        let read = |root: &Path, status: &Status| {
+            let entry = status.entries.get(entry)?;
+            Some((root.to_path_buf(), entry.path.clone(), entry.conflicted()))
+        };
+        let Some((root, path, conflicted)) = self.other_status(repo, read).flatten() else {
+            return;
+        };
+        self.focus = Focus::CommitList;
+        let (x, y) = self.pointer.mouse;
+        if self.click_count(x, y) >= 2 && self.may_be_file(&path) {
+            self.open_path(&path);
+            self.focus = Focus::Editor;
+            return;
+        }
+        self.git.commit.selected = None;
+        self.git.commit.marked.clear();
+        self.git.commit.anchor = None;
+        self.git.commit.other_selected = Some((root, path.clone()));
+        let kind = match side {
+            _ if conflicted => DiffKind::Whole,
+            Some(true) => DiffKind::Staged,
+            Some(false) => DiffKind::Unstaged,
+            None => DiffKind::Whole,
+        };
+        self.git.preview_seq += 1;
+        self.fetch_diff(&path, Target::Preview(self.git.preview_seq), kind);
+        self.request_redraw();
+    }
+
+    /// 处理其他仓库各行行尾的「打开文件」「回滚」和目录行的「＋」「−」：作用于该仓库，不切换
+    /// 当前仓库。
+    pub(super) fn press_other_action(&mut self, target: CommitTarget) {
+        let staging = self.git.commit.staging();
+        let (repo, pick) = match target {
+            CommitTarget::OtherOpen(repo, entry) | CommitTarget::OtherRevert(repo, entry) => {
+                (repo, Pick::Entry(entry))
+            }
+            CommitTarget::OtherGroupRevert(repo, group) => (repo, Pick::Group(group)),
+            CommitTarget::OtherDirRevert(row) | CommitTarget::OtherDirStage(row, _) => {
+                let rows = self.commit_other_rows();
+                let Some(OtherRow::Dir(repo, group, dir, ..)) = rows.get(row).cloned() else {
+                    return;
+                };
+                (repo, Pick::Dir(group, dir))
+            }
+            _ => return,
+        };
+        let paths = self.other_status(repo, |_, status| {
+            let entries = status.entries.iter().enumerate();
+            let wanted = entries.filter(|&(i, e)| pick.holds(i, e, staging));
+            wanted.map(|(_, e)| e.path.clone()).collect::<Vec<_>>()
+        });
+        let Some(paths) = paths.filter(|paths| !paths.is_empty()) else {
+            return;
+        };
+        match target {
+            CommitTarget::OtherOpen(..) => {
+                if self.may_be_file(&paths[0]) {
+                    self.open_path(&paths[0]);
+                    self.focus = Focus::Editor;
+                } else {
+                    self.flash(t!("git-commit-open-deleted"));
+                }
+            }
+            CommitTarget::OtherDirStage(_, on) => self.stage_other_paths(repo, &paths, on),
+            _ => self.confirm_commit_rollback(paths),
         }
         self.request_redraw();
+    }
+
+    /// 选中的其他仓库中的文件：所在仓库的下标、文件在其状态各项中的下标，以及是否已暂存（暂存区
+    /// 视图中只有已暂存的更改时为真）；没有选中、该文件已不在列表中时返回 `None`。
+    pub(super) fn other_selection(&self) -> Option<(usize, usize, bool)> {
+        let (root, path) = self.git.commit.other_selected.as_ref()?;
+        let repo = self.git.repositories.iter().position(|r| r == root)?;
+        let find = |_: &Path, status: &Status| {
+            let at = status.entries.iter().position(|e| e.path == *path)?;
+            let e = &status.entries[at];
+            Some((at, e.unstaged.is_none() && e.staged.is_some()))
+        };
+        let (entry, staged) = self.other_status(repo, find).flatten()?;
+        Some((repo, entry, staged))
+    }
+
+    /// 改动列表中选中的是其他仓库的文件时处理按键 `key`：回车打开，`⌫` 回滚，空格暂存或取消暂存
+    /// （勾选式下勾上或取消）。返回是否处理了。
+    pub(super) fn other_selection_key(&mut self, key: &Key) -> bool {
+        let Some((repo, entry, staged)) = self.other_selection() else {
+            return false;
+        };
+        let target = match key {
+            Key::Named(NamedKey::Enter) => CommitTarget::OtherOpen(repo, entry),
+            Key::Named(NamedKey::Backspace | NamedKey::Delete) => {
+                CommitTarget::OtherRevert(repo, entry)
+            }
+            Key::Named(NamedKey::Space) if self.git.commit.staging() => {
+                CommitTarget::OtherStage(repo, entry, !staged)
+            }
+            Key::Named(NamedKey::Space) => CommitTarget::OtherCheck(repo, entry),
+            _ => return false,
+        };
+        match target {
+            CommitTarget::OtherStage(..) => self.press_other_stage(target),
+            CommitTarget::OtherCheck(..) => self.press_other_check(target),
+            _ => self.press_other_action(target),
+        }
+        true
     }
 
     /// 其他仓库中文件 `path` 是否勾上了。
@@ -792,7 +904,7 @@ impl App {
         }
     }
 
-    /// 点了其他仓库的勾选框：文件的勾选框只管这一个文件；仓库、组标题的勾选框在其中全部勾上时
+    /// 点击其他仓库的勾选框：文件的勾选框只管这一个文件；仓库、组标题的勾选框在其中全部勾上时
     /// 取消全部，否则全部勾上。
     pub(super) fn press_other_check(&mut self, target: CommitTarget) {
         let paths = |status: &Status, entry: Option<usize>| -> Vec<PathBuf> {
@@ -910,7 +1022,7 @@ impl App {
         self.git.commit.blocker(status, others)
     }
 
-    /// 点了其他仓库文件行或分组行行尾的「＋」「−」：界面立即变化，命令在后台按顺序执行。
+    /// 点击其他仓库文件行或分组行行尾的「＋」「−」：界面立即变化，命令在后台按顺序执行。
     ///
     /// 冲突中的文件不在这里处理：切换到该仓库解决后再暂存。
     pub(super) fn press_other_stage(&mut self, target: CommitTarget) {
@@ -922,6 +1034,26 @@ impl App {
         let Some(root) = self.git.repositories.get(repo).cloned() else {
             return;
         };
+        self.stage_other_entries(&root, |i, _| entry.is_none_or(|n| n == i), on);
+    }
+
+    /// 暂存（`on` 为真）或取消暂存第 `repo` 个仓库中的文件 `paths`。
+    fn stage_other_paths(&mut self, repo: usize, paths: &[PathBuf], on: bool) {
+        let Some(root) = self.git.repositories.get(repo).cloned() else {
+            return;
+        };
+        self.stage_other_entries(&root, |_, e| paths.contains(&e.path), on);
+    }
+
+    /// 暂存（`on` 为真）或取消暂存仓库 `root` 中 `wanted` 选出的文件：界面立即变化，命令在后台
+    /// 按顺序执行。冲突中的文件不处理。
+    fn stage_other_entries(
+        &mut self,
+        root: &Path,
+        wanted: impl Fn(usize, &Entry) -> bool,
+        on: bool,
+    ) {
+        let root = root.to_path_buf();
         let mut touched = Vec::new();
         {
             let mut summaries = (self.git.summaries.lock()).unwrap_or_else(PoisonError::into_inner);
@@ -929,7 +1061,7 @@ impl App {
                 return;
             };
             let entries = status.entries.iter_mut().enumerate();
-            let wanted = entries.filter(|(i, e)| entry.is_none_or(|n| n == *i) && !e.conflicted());
+            let wanted = entries.filter(|(i, e)| wanted(*i, e) && !e.conflicted());
             for (_, e) in wanted {
                 staging::flip_staged(e, on, &mut touched);
             }
@@ -970,6 +1102,7 @@ impl App {
             // 界面已按成功的结果显示：放弃其余的操作，按各仓库的实际状态重新显示。
             self.git.commit.other_stage_queue.clear();
             self.git.commit.commit_queued = false;
+            self.git.commit.drop_push_intent();
             self.notify(NoticeKind::Error, t!("git-stage-failed", error = e));
         }
         if !self.git.commit.other_stage_queue.is_empty() {
@@ -980,7 +1113,29 @@ impl App {
         self.git_read_summaries();
         self.git_refresh();
         if std::mem::take(&mut self.git.commit.commit_queued) {
-            self.git_commit();
+            self.git_commit_resumed();
+        }
+    }
+}
+
+/// 其他仓库中一次操作涉及的文件：一个文件、一组，或一组中某个目录下的文件。
+enum Pick {
+    /// 状态各项中的第几个文件。
+    Entry(usize),
+    /// 一组的全部文件。
+    Group(OtherGroup),
+    /// 一组中该目录下的文件。
+    Dir(OtherGroup, PathBuf),
+}
+
+impl Pick {
+    /// 状态中的第 `index` 项 `entry` 是否在其中；`staging` 为是否在暂存区视图中，决定各组含哪些
+    /// 文件。
+    fn holds(&self, index: usize, entry: &Entry, staging: bool) -> bool {
+        match self {
+            Pick::Entry(at) => *at == index,
+            Pick::Group(group) => group.holds(entry, staging),
+            Pick::Dir(group, dir) => entry.path.starts_with(dir) && group.holds(entry, staging),
         }
     }
 }

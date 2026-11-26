@@ -30,7 +30,7 @@ impl App {
 
         // 提交视图：输入框之外按绘制时记下的位置找。
         if self.commit_shown() && y >= self.panel_rect().y {
-            // 文件名可以显示在分隔条上，但分隔条始终保留调整宽度的命中区域。
+            // 分隔条由 `Target::Splitter` 处理，写全名的那一行除外（见 `on_sidebar_splitter`）。
             if self.on_sidebar_splitter(x, y) {
                 return None;
             }
@@ -38,7 +38,7 @@ impl App {
         }
 
         // 面板只负责顶栏以下、分隔条以左的区域；侧栏开关和分隔条由后面的判断处理。写全名的结果行
-        // 覆盖在滚动条之上，伸出侧栏的那一段同样属于这一行；分隔条始终可以拖动。
+        // 覆盖在滚动条和分隔条之上，伸出侧栏的那一段同样属于这一行。
         let panel = self.panel_rect();
         let over_overflow = self.over_result_overflow_row(y);
         let on_splitter = self.on_sidebar_splitter(x, y);
@@ -186,6 +186,7 @@ impl App {
                 part @ (SettingsPart::KeyRow(_)
                 | SettingsPart::KeyEdit(_)
                 | SettingsPart::KeyReset(_)
+                | SettingsPart::KeyVim(..)
                 | SettingsPart::KeyRemove(_)
                 | SettingsPart::KeySave
                 | SettingsPart::KeyCancel),
@@ -263,7 +264,7 @@ impl App {
         if let Some(index) = parts.row_at(y, self.overlays.picker.scroll)
             && index < self.overlays.picker.hits.len()
         {
-            // 分组标题点了没有反应。
+            // 分组标题点击没有反应。
             if self.picker_row_selectable(index) {
                 self.overlays.picker.selected = index;
                 self.picker_accept();
@@ -273,9 +274,17 @@ impl App {
         true
     }
 
-    /// (`x`, `y`) 是否在侧栏分隔条上；Git 文件名浮层不抢占调整宽度的区域。
-    fn on_sidebar_splitter(&self, x: f32, y: f32) -> bool {
-        self.panels.sidebar.visible && self.layout.splitter.contains(x, y)
+    /// (`x`, `y`) 是否在可以拖动的侧栏分隔条上。
+    ///
+    /// 写全名的那一行（文件树、改动列表、搜索结果）画在分隔条之上：在这一行的高度内按下作用于
+    /// 这一行，与看到的一致；其他高度仍可拖动分隔条。鼠标从编辑区一侧移到分隔条上时没有行在写
+    /// 全名，分隔条照常可以拖动。
+    pub(super) fn on_sidebar_splitter(&self, x: f32, y: f32) -> bool {
+        self.panels.sidebar.visible
+            && self.layout.splitter.contains(x, y)
+            && !self.over_tree_overflow_row(y)
+            && !self.over_commit_overflow_row(y)
+            && !self.over_result_overflow_row(y)
     }
 
     /// 是否已处理对侧栏顶部切换按钮或搜索面板的点击。
@@ -291,7 +300,7 @@ impl App {
         if let Some(view) = hit(&self.sidebar_tabs(), x, y) {
             match view {
                 SidebarView::Files => self.show_files(),
-                SidebarView::Search => self.open_global_search(false),
+                SidebarView::Search => self.show_global_search(false, None),
                 SidebarView::Commit => self.show_commit(),
             }
 
@@ -334,10 +343,7 @@ impl App {
         }
 
         // 分隔条在侧栏右边缘，由后面的分支处理；写全名的结果行覆盖在分隔条之上。
-        if self.panels.sidebar.visible
-            && self.layout.splitter.contains(x, y)
-            && !self.over_result_overflow_row(y)
-        {
+        if self.on_sidebar_splitter(x, y) {
             return false;
         }
 
@@ -376,11 +382,23 @@ impl App {
             .as_ref()
             .map(|f| (Focus::Prompt, true, f));
         let rename = self.terminal.rename.as_ref().map(|(id, field)| {
-            let shown = self.hits.terminal.iter().any(|(rect, hit)| {
-                matches!(hit, crate::app::terminal::HeaderHit::Tab(index)
-                    if rect.contains(x, y)
-                        && self.terminal.tabs.get(*index).is_some_and(|tab| tab.id == *id))
-            });
+            let shown = if let Some(document) = self.terminal.editor_document() {
+                self.editor.active().is_some_and(|doc| doc.id == document)
+                    && self.terminal.tab().is_some_and(|tab| tab.id == *id)
+                    && self.hits.tabs.iter().any(|hit| {
+                        self.editor
+                            .documents
+                            .get(hit.index)
+                            .is_some_and(|doc| doc.id == document)
+                            && hit.tab.contains(x, y)
+                    })
+            } else {
+                self.hits.terminal.iter().any(|(rect, hit)| {
+                    matches!(hit, crate::app::terminal::HeaderHit::Tab(index)
+                        if rect.contains(x, y)
+                            && self.terminal.tabs.get(*index).is_some_and(|tab| tab.id == *id))
+                })
+            };
             (Focus::TerminalRename, shown, field)
         });
         let terminal_find =
@@ -500,10 +518,9 @@ impl App {
         self.focus = Focus::Editor;
         self.ime.preedit.clear();
 
-        // 差异、图片、表格这类不显示文本的标签：点击只拿焦点，表格底部的工作表标签例外，
-        // 点它会换工作表。
-        // 文档中的文本看不见，在它上面放光标、转到定义都没有意义，放了光标还会把视图滚到看不见
-        // 的光标那里。
+        // 差异、图片、表格这类不显示文本的标签：点击只拿焦点，表格底部的工作表标签例外，点它会换工
+        // 作表。文档中的文本看不见，在它上面放光标、转到定义都没有意义，放了光标还会把视图滚到看不
+        // 见的光标那里。
         if !self.active_shows_text() {
             self.click_table(x, y);
             return;
@@ -530,14 +547,14 @@ impl App {
             return;
         }
 
-        // `⇧⌥` 按下拖动框出一列；`⌥` 单击添加或移除一个光标，按住拖动则添加一个选区。
+        // `⇧⌥` 单击框出列或添加选区，按下拖动框出一列；`⌥` 单击添加或移除一个光标，按住拖动则添加一个选区。
         let (shift, alt) = (
             self.pointer.modifiers.shift_key(),
             self.pointer.modifiers.alt_key(),
         );
         if alt && !l.gutter.contains(x, y) {
             if shift {
-                self.start_column_drag(x, y);
+                self.start_column_select(x, y);
             } else if count == 1 {
                 let before = self.editor.active().map(|d| d.selections().0.len());
                 self.toggle_cursor(pos);
@@ -547,6 +564,16 @@ impl App {
                     self.pointer.drag = Drag::AddSelect { origin: pos };
                 }
             }
+            return;
+        }
+
+        // 在选中的文字上按下：可能要拖动这段文字，选区保留到开始拖动或松开时再定。
+        if count == 1 && !shift && !l.gutter.contains(x, y) && self.press_on_selection(x, y) {
+            self.pointer.drag = Drag::MoveText {
+                press: (x, y),
+                at: pos,
+                moving: false,
+            };
             return;
         }
 
@@ -598,5 +625,28 @@ impl App {
             self.pointer.drag = Drag::Columns { anchor };
             self.drag_columns(x, y, anchor);
         }
+    }
+
+    /// 在窗口坐标 (`x`, `y`)（逻辑像素）处进行 `⇧⌥` 列选择：单击时从主光标（或上次列选择）框出列，
+    /// 拖动时从按下处框出一列。
+    pub(super) fn start_column_select(&mut self, x: f32, y: f32) {
+        self.focus = Focus::Editor;
+        self.ime.preedit.clear();
+        let text_x = x.max(self.layout.text.x);
+        let Some(press) = self.line_cell_at(text_x, y) else {
+            return;
+        };
+        let tab_width = self.editor.active_tab_width();
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        let anchor = doc.column_anchor(tab_width);
+        doc.record_cursors();
+        doc.select_columns(anchor, press, tab_width);
+        self.cursors_changed();
+        self.pointer.drag = Drag::ColumnClick {
+            origin: (x, y),
+            anchor: press,
+        };
     }
 }

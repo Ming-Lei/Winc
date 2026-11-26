@@ -226,18 +226,13 @@ impl App {
 
     /// 打开文件 `path` 的历史标签；`lines` 是只看的行范围（见 [`LogQuery::lines`]）。
     fn open_history(&mut self, path: &Path, lines: Option<(usize, usize)>) {
-        let Some(root) = self.git.root.clone() else {
-            self.flash(t!("git-not-a-repository"));
+        // 文件所在的仓库，不一定是当前仓库；切到历史标签时当前仓库跟过去（`git_follow_active`）。
+        let Some((root, path)) = self.repo_of(path) else {
+            self.flash(match self.git.root {
+                Some(_) => t!("git-file-outside-repository"),
+                None => t!("git-not-a-repository"),
+            });
             return;
-        };
-        // 路径可能经过符号链接（macOS 的 `/var` 就是 `/private/var`）。
-        let path = match winc_config::files::canonicalize(path) {
-            Ok(real) if real.starts_with(&root) => real,
-            _ if path.starts_with(&root) => path.to_path_buf(),
-            _ => {
-                self.flash(t!("git-file-outside-repository"));
-                return;
-            }
         };
         let title = match lines {
             Some((start, end)) => {
@@ -352,7 +347,7 @@ impl App {
     }
 
     /// 作者菜单里列的作者：已经取回来的提交里的作者，按提交数从多到少，最多 30 个
-    /// （经验值：再长菜单就超出窗口高度）。
+    /// （再长菜单就超出窗口高度）。
     ///
     /// 已经按作者筛选时取回来的只剩这几位的提交：沿用这个标签上次弹出时的名单，才能再加别的
     /// 作者。

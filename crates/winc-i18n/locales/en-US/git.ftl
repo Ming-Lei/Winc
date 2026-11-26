@@ -53,6 +53,7 @@ git-stash-more = { $count ->
     [one] 1 more stash…
    *[other] { $count } more stashes…
 }
+git-stash-too-many = Too many files are selected to stash at once on Windows. Select whole folders, or stash in several parts.
 git-stash-no-files = This stash has no changes to show
 git-stash-apply = Apply
 git-stash-pop = Pop
@@ -132,6 +133,14 @@ git-clone-running = Cloning…
 git-clone-invalid-url = Invalid URL
 git-clone-no-parent = The selected location doesn’t exist
 git-clone-occupied = The target folder already exists and isn’t empty
+git-repository-add-title = Add Repository
+git-repository-add-label = Location
+git-repository-add-placeholder = A folder in the repository, absolute or relative to the open folder
+git-repository-add-button = Add
+git-repository-add-needs-folder = Open a folder with Git turned on first
+git-repository-add-not-found = Couldn’t add repository: “{ $path }” isn’t in a Git repository
+git-repository-added = Added repository “{ $name }”
+git-repository-removed = Removed repository “{ $name }” from the list
 git-op-canceled = Canceled { $what }
 git-question-sign-in = Sign In to { $host }
 git-question-unlock-key = Unlock SSH Key
@@ -347,6 +356,10 @@ git-commit-reformatted = { $count ->
     [one] Reformatted 1 file before committing
    *[other] Reformatted { $count } files before committing
 }
+git-commit-reformat-failed = { $count ->
+    [one] Couldn’t reformat 1 file; committed it as is
+   *[other] Couldn’t reformat { $count } files; committed them as is
+}
 git-undo-commit-confirm = Undo the last commit?
 git-undo-commit-confirm-detail = The changes in “{ $subject }” stay staged, and its message returns to the commit box.
 git-undo-commit-confirm-button = Undo Commit
@@ -407,7 +420,7 @@ git-undo-commit-done = Undid commit { $oid }; its changes are staged
 git-undo-commit-done-in = Undid commit { $oid } in “{ $name }”
 git-undo-commit-failed = Couldn’t undo the commit: { $error }
 git-commit-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially committed
-git-rollback-nothing-checked = Select the files to roll back first
+git-rollback-nothing-unstaged = No unstaged changes to roll back
 git-stage-partial-not-utf8 = “{ $name }” isn’t UTF-8 text, so its changes can’t be partially staged
 git-stage-failed = Couldn’t update the staging area: { $error }
 git-stage-nothing = The current file has no unstaged changes
@@ -423,6 +436,8 @@ git-rollback-confirm-one = Roll back changes to “{ $name }”?
 git-rollback-confirm-many = Roll back changes to { $count } files?
 git-rollback-confirm-detail = Tracked files are restored to the last commit, and untracked files are moved to the { common-trash }.
 git-rollback-confirm-detail-remote = Tracked files are restored to the last commit, and untracked files are deleted and can’t be restored.
+git-rollback-confirm-detail-index = Unstaged changes in tracked files are discarded and staged changes are kept; untracked files are moved to the { common-trash }.
+git-rollback-confirm-detail-index-remote = Unstaged changes in tracked files are discarded and staged changes are kept; untracked files are deleted and can’t be restored.
 git-rollback-confirm-button = Roll Back
 git-rollback-file-failed = Couldn’t roll back “{ $name }”: { $error }
 git-rollback-done = { $count ->
@@ -446,14 +461,19 @@ git-not-a-repository = The current folder isn’t a Git repository
 git-not-on-branch = You’re not on a branch. Check out a branch first
 git-no-file-in-tab = The current tab has no file
 git-diff-title = { $name } · Diff
+git-diff-title-changes = { $name } · Changes
+git-diff-title-staged = { $name } · Staged Changes
 git-diff-submodule = “{ $name }” is a submodule; no diff is shown
 git-diff-head-unreadable = Couldn’t read the last committed version of “{ $name }”: { $error }
+git-diff-index-unreadable = Couldn’t read the staged version of “{ $name }”: { $error }
 git-diff-too-large = “{ $name }” is too large; no diff is shown
 git-diff-binary = “{ $name }” is a binary file; no diff is shown
 git-diff-identical = “{ $name }” is the same as in the last commit; no changes
 git-diff-line-endings-only = “{ $name }” differs from the last commit only in line endings
 git-diff-side-worktree-deleted = Working Tree · Deleted
 git-diff-side-head-missing = HEAD · File Doesn’t Exist
+git-diff-side-index = Staging Area
+git-diff-side-index-missing = Staging Area · File Doesn’t Exist
 
 ## Trusting repository configuration
 
@@ -508,6 +528,7 @@ git-location-this-window = Open in This Window
 git-location-new-window = Open in New Window
 git-location-remove = Remove Worktree…
 git-location-prune = Prune Stale Worktrees
+git-location-forget = Remove from List
 git-tip-other-worktrees = { $count ->
     [one] 1 other worktree has uncommitted changes
    *[other] { $count } other worktrees have uncommitted changes
@@ -773,6 +794,11 @@ git-commit-group-changes = Changes
 git-commit-group-staged = Staged Changes
 git-commit-group-conflicts = Conflicts
 git-commit-group-untracked = Untracked Files
+git-commit-revert-group = Roll Back All Unstaged Changes
+git-commit-revert-all = Roll Back All Changes
+git-commit-revert-folder = Roll Back Changes in This Folder
+git-commit-stage-group = Stage All Changes
+git-commit-unstage-group = Unstage All Changes
 git-commit-open-deleted = The file was deleted and can’t be opened
 git-commit-blocker-conflicts = { $count ->
     [one] { $count } file still has unresolved conflicts
@@ -837,3 +863,15 @@ git-merge-side-result = Result
 git-rebase-hint = ↑↓ select · { $alt }↑↓ move · P R E S F D set action
 git-merge-conflict-title = Conflict { $index } of { $count }
 git-merge-edit-conflict = Edit Manually
+git-combined-title = Uncommitted Changes
+git-combined-no-text-change = No text changes
+git-combined-comparing = Comparing…
+git-combined-empty = No uncommitted changes
+git-combined-files = { $count ->
+    [one] { $count } file
+   *[other] { $count } files
+}
+git-combined-open-file = Open File
+git-combined-open-diff = Open in Diff Tab
+git-combined-previous = Previous Change
+git-combined-next = Next Change

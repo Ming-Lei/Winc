@@ -14,6 +14,7 @@ impl App {
     ) -> Self {
         // 启动时打开的目录在界面创建之前读入，此处补充设置文件树的显示方式。
         let compact = config.compact_folders != Some(false);
+        let staging = config.git_staging_area == Some(true);
         if let Some(ws) = &mut editor.workspace {
             ws.set_compact(compact);
         }
@@ -54,6 +55,7 @@ impl App {
                 saved_config: config.clone(),
                 config_path: None,
                 state_path: None,
+                state_requests: 0,
                 config_rev: 0,
             },
             config,
@@ -93,12 +95,14 @@ impl App {
             ime: Default::default(),
             layout: Layout::default(),
             tabs: TabBar::default(),
+            tab_switch: Default::default(),
             panes: Default::default(),
             diff: Default::default(),
             status: Default::default(),
             caches: crate::app::editor::EditorCaches {
                 sticky_cache: None,
                 wraps: Arc::default(),
+                compares: Default::default(),
                 line_tokens: Default::default(),
                 minimap_rows: Default::default(),
                 max_scroll_x: None,
@@ -144,6 +148,7 @@ impl App {
                     ..Default::default()
                 },
                 file_hover: None,
+                dragged_in: None,
                 name_input: None,
                 global: GlobalSearch::default(),
                 outline: OutlineState::default(),
@@ -186,8 +191,13 @@ impl App {
             disk: crate::app::workspace::DiskState {
                 watcher: None,
                 extra_watchers: Vec::new(),
+                restoring: None,
+                prepared: Arc::default(),
+                starting: Vec::new(),
+                started: Arc::default(),
                 solo: false,
                 open_alone: None,
+                project_offer: None,
                 changes_due: None,
                 rereads: Default::default(),
                 saves: Default::default(),
@@ -205,9 +215,11 @@ impl App {
             setup: Default::default(),
             settings: SettingsState::default(),
             format: FormatState::new(formatter()),
+            http: Default::default(),
             git: {
                 let mut git = git::GitState::default();
                 git.commit.set_compact(compact);
+                git.commit.set_staging(staging);
                 git
             },
             remote: Default::default(),

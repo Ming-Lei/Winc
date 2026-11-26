@@ -18,11 +18,34 @@ use crate::field::{TextField, Unit};
 use crate::keymap::{self, Action, Context, Lookup, Os, Stroke};
 use crate::theme::KEYS_ROW;
 
-/// 文件树键入跳转的重置间隔（毫秒，经验值）。
+/// 文件树键入跳转的重置间隔（毫秒，取自调参）。
 ///
 /// 两次键入相隔超过该值时，重新从第一个字符开始匹配。该间隔足以连续键入文件名的前几个字符，
 /// 停顿后的新一次查找也不会接在旧字符之后。
 const TYPE_RESET: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// 两段组合键的第一段按下后等待第二段的最长时间（5 秒）。
+///
+/// 超过后等待作废，按键恢复原来的含义：否则离开键盘一段时间后的第一次按键会被当作第二段
+/// 吞掉。取自调参：长于看一眼状态栏提示再按第二段所需的时间。
+const CHORD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 等待第二段的两段组合键。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingChord {
+    /// 已按下的第一段。
+    first: Stroke,
+    /// 等待作废的时刻。
+    until: Instant,
+}
+
+impl PendingChord {
+    /// 创建从现在起等待第二段的组合键，第一段为 `first`。
+    pub(crate) fn new(first: Stroke) -> Self {
+        let until = Instant::now() + CHORD_TIMEOUT;
+        Self { first, until }
+    }
+}
 
 impl App {
     /// 处理键盘按下事件 `event`。
@@ -73,6 +96,10 @@ impl App {
         }
         // 窗口内的提示框、菜单打开时，按键只给它们。
         if self.alert_key(&event.logical_key, cmd) || self.popup_key(event) {
+            return;
+        }
+        // 标签页切换列表打开时，选择用的按键先给它。
+        if self.tab_switch_key(event) {
             return;
         }
         // 设置浮层是模态的：打开期间只处理它自己的按键，其他快捷键不会传到下层。
@@ -210,6 +237,16 @@ impl App {
     ///
     /// 是快捷键则执行并返回 `true`；是两步组合键的第一步则等待第二步，同样返回 `true`。
     /// 不是快捷键时返回 `false`，按键交给焦点所在的部件。
+    /// 放弃等待中的两段组合键，撤下状态栏的提示；没有在等待时不做任何事。
+    ///
+    /// 窗口失去焦点时调用：第二段不会再来，等待留到回来以后会吞掉第一次按键。
+    pub(in crate::app) fn cancel_chord(&mut self) {
+        if self.pending_chord.take().is_some() {
+            self.status.message = None;
+            self.request_redraw();
+        }
+    }
+
     pub(in crate::app) fn on_shortcut(&mut self, stroke: Stroke) -> bool {
         let table = keymap::current();
 
@@ -219,12 +256,16 @@ impl App {
             && (!self.terminal_at_prompt()
                 || self.config.terminal_application_priority == Some(true))
         {
-            self.pending_chord = None;
-            self.status.message = None;
+            self.cancel_chord();
         }
 
-        if let Some(first) = self.pending_chord.take() {
+        if let Some(chord) = self.pending_chord.take() {
             self.status.message = None;
+            // 等待已经作废：这次按键按原来的含义处理。
+            let first = chord.first;
+            if Instant::now() >= chord.until {
+                return self.on_shortcut(stroke);
+            }
             if stroke.key == keymap::KeyCode::Escape {
                 return true;
             }
@@ -263,11 +304,13 @@ impl App {
                 .into_iter()
                 .any(|a| self.run_action(self.keyboard_action(a))),
             Lookup::Chord => {
-                self.pending_chord = Some(stroke);
+                let chord = PendingChord::new(stroke);
+                let until = chord.until;
+                self.pending_chord = Some(chord);
                 let key = stroke.label(Os::CURRENT);
-                // 状态栏提示在第二步到来之前一直保留，不自动消失（`StatusState::until` 为 `None`）。
+                // 状态栏的提示保留到第二段到来或等待作废。
                 self.status.message = Some(winc_i18n::t!("cmd-chord-pending", key = key));
-                self.status.until = None;
+                self.status.until = Some(until);
                 self.request_redraw();
                 true
             }
@@ -300,6 +343,18 @@ impl App {
         }
         if self.log_active() {
             self.log_key(event.key);
+            return;
+        }
+        // 「未提交的更改」：当前段里有光标或选区时按键交给它，否则滚动整个标签。
+        if self.combined_active() {
+            if self.combined_caret()
+                && self
+                    .in_combined_current(|app| app.on_key_editor(event, cmd))
+                    .is_some()
+            {
+                return;
+            }
+            self.diff_key(event.key, cmd);
             return;
         }
         if self.hex_active() {
@@ -361,6 +416,8 @@ impl App {
             Key::Named(NamedKey::Home) => Command::LineStart { extend },
             Key::Named(NamedKey::End) => Command::LineEnd { extend },
             Key::Named(NamedKey::Enter | NamedKey::Tab) if control => return,
+            // Markdown 源代码中列表项、引用续写记号（`App::source_markdown_enter`）。
+            Key::Named(NamedKey::Enter) if !shift && self.source_markdown_enter() => return,
             Key::Named(NamedKey::Enter) => Command::Newline,
             Key::Named(NamedKey::Tab) if shift => Command::Outdent,
             Key::Named(NamedKey::Tab) => Command::Indent,
@@ -540,7 +597,8 @@ impl App {
     ///
     /// `↑` `↓` 移动选中项并显示选中的匹配，`⌘↑` 回到输入框，`Home` `End` 选中第一行、
     /// 最后一行，`PageUp` `PageDown` 翻一页，
-    /// `←` `→` 折叠或展开文件，回车打开并将焦点移到编辑区，
+    /// `←` `→` 折叠或展开目录、文件（已经折叠、展开时回到上一级、进到第一行），回车打开并将焦点
+    /// 移到编辑区，
     /// 空格打开但焦点留在列表，`⌫` 从结果中移除。
     fn on_key_results(&mut self, event: &KeyEvent) {
         self.results_key(&event.logical_key);
@@ -573,22 +631,40 @@ impl App {
                 let page = self.result_page();
                 self.jump_result(selected.map_or(0, |i| i.saturating_sub(page)));
             }
-            Key::Named(NamedKey::ArrowLeft) => match row {
-                Some(ResultRow::File(f)) => self.set_result_collapsed(f, true),
-                // 在匹配上按 `←` 回到该匹配所在文件的那一行。
-                Some(ResultRow::Match(f, _)) => {
-                    let path = self.panels.global.engine.results[f].path.clone();
-                    self.panels.global.selected = Some((path, None));
+            // 同文件树：展开着的目录、文件先折叠，已经折叠（或是匹配）时回到上一级。
+            Key::Named(NamedKey::ArrowLeft) => match (row, selected) {
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if !self.result_row_collapsed(i) && self.result_row_has_children(i) =>
+                {
+                    self.fold_result_row(i, true, false);
                 }
-                None => {}
+                (Some(_), Some(i)) => {
+                    if let Some(parent) = self.panels.global.parent_row(i) {
+                        self.panels.global.select_row(parent);
+                        self.scroll_result_into_view(parent);
+                    }
+                }
+                _ => {}
             },
-            Key::Named(NamedKey::ArrowRight) => {
-                if let Some(ResultRow::File(f)) = row {
-                    self.set_result_collapsed(f, false);
+            // 折叠着的先展开，已经展开时进到第一行。
+            Key::Named(NamedKey::ArrowRight) => match (row, selected) {
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if self.result_row_collapsed(i) =>
+                {
+                    self.fold_result_row(i, false, false);
                 }
-            }
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i))
+                    if self.result_row_has_children(i) =>
+                {
+                    self.step_result(1, false);
+                    self.browse_result();
+                }
+                _ => {}
+            },
             Key::Named(NamedKey::Enter | NamedKey::Space) => match (row, selected) {
-                (Some(ResultRow::File(_)), Some(i)) => self.click_result(i, false),
+                (Some(ResultRow::Dir(_) | ResultRow::File(_)), Some(i)) => {
+                    self.click_result(i, false);
+                }
                 (Some(ResultRow::Match(..)), Some(i)) => {
                     // 回车在普通标签中打开并进入编辑区；空格留在结果列表，按预览标签的设置打开。
                     let enter = matches!(key, Key::Named(NamedKey::Enter));
@@ -703,6 +779,15 @@ impl App {
             return;
         }
 
+        // 「快捷键」页没有设置行：按键交给页内的搜索框。
+        if self.settings.selected.page() == crate::layout::SettingsPage::Keys
+            && !self.settings_searching()
+        {
+            self.focus = Focus::KeySearch;
+            self.on_key_search_keys(event, base, cmd);
+            return;
+        }
+
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => self.close_settings(),
             Key::Named(NamedKey::ArrowDown) => self.settings_move(true),
@@ -811,6 +896,11 @@ impl App {
             Key::Named(NamedKey::Tab) => {}
             _ if cmd && matches!(base, "," | "w") => self.close_settings(),
             _ if cmd && base == "v" => self.paste(),
+            _ if cmd && base == "f" => {
+                self.settings.keys_query.select_all();
+                self.reset_blink();
+                self.request_redraw();
+            }
             _ => self.on_key_field(event, base, cmd),
         }
     }
@@ -1186,6 +1276,12 @@ impl App {
     /// 组字中的文本（`Preedit`）暂存起来用于显示；提交的文本（`Commit`）插入焦点所在的
     /// 编辑区或输入框。
     pub(in crate::app) fn on_ime(&mut self, ime: Ime) {
+        // 窗口内的提示框拦截按键时，输入法的文字同样不交给它下面的编辑区和输入框。
+        if self.overlays.alert.is_some() {
+            self.ime.preedit.clear();
+            self.ime.field_preedit.clear();
+            return;
+        }
         match ime {
             // 组字文字只属于焦点所在的一处，另一处的清空。
             Ime::Preedit(text, _) => {

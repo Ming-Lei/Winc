@@ -26,6 +26,9 @@ use crate::app::animation::Card;
 use crate::app::git::form::{FormDialog, FormKind, FormPlan};
 use crate::app::git::question::Asker;
 use crate::app::lifecycle::notice::NoticeAction;
+use crate::app::workspace::project::{
+    ProjectFolders, opens_on_host, project_error, project_folders,
+};
 use crate::app::{App, TextField, UserEvent};
 use crate::askpass::{Listener, Question};
 use crate::layout::DialogPart;
@@ -40,14 +43,17 @@ const SERVER_DIR: &str = "WINC_SERVER_DIR";
 /// 服务进程的文件名前缀，其后是它所运行的系统（写法见 [`Program::system`]）。
 const SERVER_PREFIX: &str = "winc-server-";
 
-/// 取得目录在远端的真实路径的脚本，参数是用户输入的目录。
+/// 取得目录在远端的真实路径的脚本，参数是用户输入的目录或项目文件。
 ///
 /// 相对路径和以 `~/` 开头的路径相对于主目录，空的输入表示主目录；`pwd -P` 给出不经过符号
-/// 链接的路径。目录不存在时依次给出主目录、该目录的绝对路径和仍然存在的最近一级上级目录
-/// （进不去时为主目录），各占一行，退出码为 [`MISSING`]。
+/// 链接的路径。是文件时给出所在目录的真实路径加文件名，退出码为 [`FILE`]。不存在时依次给出
+/// 主目录、该目录的绝对路径和仍然存在的最近一级上级目录（进不去时为主目录），各占一行，退出码
+/// 为 [`MISSING`]。
 const RESOLVE: &str = concat!(
-    r#"p=$1; case $p in ""|"~") p=. ;; "~/"*) p=${p#"~/"} ;; esac; "#,
-    r#"cd || exit 1; if [ -e "$p" ]; then cd -- "$p" && pwd -P; exit; fi; h=$(pwd -P); "#,
+    r#"p=$1; case $p in ""|"~") p=. ;; "~/"*) p=${p#"~/"} ;; esac; cd || exit 1; "#,
+    r#"if [ -f "$p" ]; then cd -- "$(dirname -- "$p")" || exit 1; "#,
+    r#"printf '%s/%s\n' "$(pwd -P)" "$(basename -- "$p")"; exit 4; fi; "#,
+    r#"if [ -e "$p" ]; then cd -- "$p" && pwd -P; exit; fi; h=$(pwd -P); "#,
     r#"case $p in /*) w=$p ;; *) w=$h/$p ;; esac; printf '%s\n%s\n' "$h" "$w"; "#,
     r#"while [ ! -d "$p" ]; do p=$(dirname -- "$p"); done; "#,
     r#"cd -- "$p" 2>/dev/null || cd; pwd -P; exit 3"#,
@@ -56,11 +62,18 @@ const RESOLVE: &str = concat!(
 /// [`RESOLVE`] 在目录不存在时的退出码。
 const MISSING: i32 = 3;
 
+/// [`RESOLVE`] 在给出的路径是文件时的退出码。
+const FILE: i32 = 4;
+
 /// 在远端找到的目录（虚拟路径）。
 #[derive(Debug)]
 enum Reached {
     /// 要打开的目录。
     Folder(PathBuf),
+    /// 要打开的项目文件，已在后台读好。
+    Project(ProjectFolders),
+    /// 给出的路径是文件，但无法作为项目打开：`reason` 是提示的原因。
+    Rejected { file: PathBuf, reason: String },
     /// 要打开的目录 `wanted` 已不存在：`home` 是主目录，`nearest` 是仍然存在的最近一级上级
     /// 目录。
     Missing {
@@ -82,10 +95,13 @@ pub(in crate::app) enum After {
 }
 
 impl Reached {
-    /// 返回找到的目录；要打开的目录已不存在时返回它本身，按打开的目录被删除处理。
+    /// 返回找到的目录；要打开的目录已不存在时仍返回该目录，按打开的目录被删除处理；给出的文件
+    /// 无法打开时返回其所在的目录。
     fn into_folder(self) -> PathBuf {
         match self {
             Reached::Folder(folder) | Reached::Missing { wanted: folder, .. } => folder,
+            Reached::Project(project) => project.root,
+            Reached::Rejected { file, .. } => file.parent().map_or(file.clone(), Path::to_path_buf),
         }
     }
 }
@@ -120,11 +136,11 @@ pub(crate) struct RemoteState {
     stepping: bool,
     /// 选择面板在后台读好的目录。
     pub(in crate::app) listed: picker::Listings,
-    /// 后台启动好的对远端目录的监视，由 `App::poll_remote_watcher` 取走。
-    pub(in crate::app) watching: Arc<Mutex<Option<winc_editor::Watcher>>>,
     /// 正在进行的连接成功、打开目录之后要打开的文件，及参数中写的目录（见
     /// [`App::open_remote`]）；没有时为 `None`。
     files: Option<(PathBuf, Vec<crate::cli::Target>)>,
+    /// 连接成功后要打开的项目文件，其第一个目录在远端（见 [`App::open_folder`]）。
+    pub(in crate::app) project: Option<PathBuf>,
 }
 
 impl Default for RemoteState {
@@ -142,8 +158,8 @@ impl Default for RemoteState {
             paused: false,
             stepping: false,
             listed: picker::Listings::default(),
-            watching: Arc::default(),
             files: None,
+            project: None,
         }
     }
 }
@@ -573,6 +589,7 @@ fn resolve(target: &Target, folder: &str, abort: &remote::Abort) -> std::io::Res
     let path = |bytes| winc_backend::virtual_path(target, bytes);
     Ok(match output.code {
         Some(0) => Ok(Reached::Folder(path(text))),
+        Some(FILE) => Ok(read_project(path(text))),
         Some(MISSING) => {
             let mut lines = text.splitn(3, |&b| b == b'\n');
             let mut next = || path(lines.next().unwrap_or_default());
@@ -585,6 +602,21 @@ fn resolve(target: &Target, folder: &str, abort: &remote::Abort) -> std::io::Res
         }
         _ => Err(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
     })
+}
+
+/// 读取远端的项目文件 `file`（在后台线程上调用）。
+fn read_project(file: PathBuf) -> Reached {
+    let read = match opens_on_host(&file) {
+        true => project_folders(&file).map_err(|error| project_error(&file, &error)),
+        false => Err(t!(
+            "workspace-remote-not-project",
+            name = winc_editor::display_name(&file)
+        )),
+    };
+    match read {
+        Ok(project) => Reached::Project(project),
+        Err(reason) => Reached::Rejected { file, reason },
+    }
 }
 
 /// 把 `files` 中位于参数中写的目录 `wanted` 之下的路径换到远端取得的目录 `folder` 之下：
@@ -603,6 +635,24 @@ fn rebase(files: &[crate::cli::Target], wanted: &Path, folder: &Path) -> Vec<cra
         .collect()
 }
 
+/// 各主机正在进行的连接：同一台主机同时只建立一条，见 [`turn`]。
+static TURNS: Mutex<Vec<(Target, Arc<Mutex<()>>)>> = Mutex::new(Vec::new());
+
+/// 等别的窗口到 `target` 的连接结束的间隔（毫秒）：期间检查用户是否取消了这一次。
+const TURN_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// 返回到 `target` 的连接要先占用的锁：几个窗口同时连接同一台主机时逐个进行，后来的发现已有
+/// 连接就沿用。否则后登记的连接会顶掉先登记的，先前窗口正在进行的请求全部失败。
+fn turn(target: &Target) -> Arc<Mutex<()>> {
+    let mut connecting = TURNS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, turn)) = connecting.iter().find(|(host, _)| host == target) {
+        return Arc::clone(turn);
+    }
+    let turn = Arc::default();
+    connecting.push((target.clone(), Arc::clone(&turn)));
+    turn
+}
+
 /// 连接 `target`（已有连接时沿用）并取得 `folder` 的虚拟路径。
 fn open(
     target: &Target,
@@ -612,6 +662,17 @@ fn open(
     abort: &remote::Abort,
     report: &dyn Fn(Stage),
 ) -> Outcome {
+    let turn = turn(target);
+    let _held = loop {
+        match turn.try_lock() {
+            Ok(held) => break held,
+            Err(std::sync::TryLockError::Poisoned(held)) => break held.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if abort.is_aborted() => {
+                return Err(t!("workspace-remote-canceled").to_owned());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(TURN_POLL),
+        }
+    };
     let existing = remote::is_connected(target);
     if !existing {
         connect(target, listener, notify, abort, report)?;
@@ -718,7 +779,8 @@ impl App {
         dialog.error = None;
         // 密钥文件按主机记下：此后经最近的目录、重新连接和终端登录这台主机时都用它。
         if self.state.remote_key(target.as_str()).unwrap_or_default() != key {
-            self.update_state(|state| state.set_remote_key(target.as_str(), &key));
+            let host = target.clone();
+            self.update_state(move |state| state.set_remote_key(host.as_str(), &key));
         }
         self.remote.form = Some((host, port));
         self.remote_open(target, String::new(), After::Browse);
@@ -808,6 +870,14 @@ impl App {
         true
     }
 
+    /// 是否为远端主机的窗口：开着远端主机上的目录，或没有目录、正在连接远端主机。
+    pub(crate) fn is_remote_window(&self) -> bool {
+        match self.editor.root() {
+            Some(root) => winc_backend::is_remote(root),
+            None => self.remote.connecting.is_some(),
+        }
+    }
+
     /// 打开 `ssh://` 参数指定的远端项目 `open` 并切到前台：本窗口开着该目录时直接打开其中的
     /// 文件；否则在后台连接（已有连接时沿用），打开目录之后再打开文件，带行号的跳到该位置。
     pub(crate) fn open_remote(&mut self, open: crate::cli::RemoteOpen) {
@@ -832,7 +902,7 @@ impl App {
     }
 
     /// 启动时调用：上次退出时开着的目录在远端主机上时，重新连接并打开它，标签按那个目录的
-    /// 现场恢复，返回是否开始了连接。连接在后台进行，窗口先显示开始页；需要口令时照常询问。
+    /// 现场恢复，返回是否开始了连接。连接在后台进行，窗口先显示开始页；需要口令时仍然询问。
     pub(crate) fn restore_remote_folder(&mut self) -> bool {
         let wanted = self.editor.root().is_none() && self.remote_enabled();
         let folder = self.state.last.clone().filter(|_| wanted);
@@ -962,6 +1032,8 @@ impl App {
             return;
         }
         match outcome {
+            // 连接已建立，保留；只提示文件无法打开的原因。
+            Ok(Reached::Rejected { reason, .. }) => self.notify(NoticeKind::Error, reason),
             Ok(Reached::Missing {
                 wanted,
                 home,
@@ -992,6 +1064,15 @@ impl App {
                 }
                 let home = winc_backend::native_lossy(&folder).into_owned();
                 self.open_remote_browser(target, home);
+            }
+            Ok(Reached::Project(project)) if self.remote_enabled() => {
+                self.remote.lost = false;
+                let file = project.file.clone();
+                *self.link.shared.remote_project.borrow_mut() = Some(project);
+                self.open_folder(&file);
+                if let Some((_, files)) = files {
+                    self.open_files(&files);
+                }
             }
             Ok(reached) if self.remote_enabled() => {
                 let folder = reached.into_folder();
@@ -1128,6 +1209,22 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 同一台主机的连接共用一把锁，逐个进行；不同主机互不相干。
+    #[test]
+    fn connections_to_one_host_take_turns() {
+        let (here, there) = (
+            Target::new("turn-a").unwrap(),
+            Target::new("turn-b").unwrap(),
+        );
+        let (first, second) = (turn(&here), turn(&here));
+        assert!(Arc::ptr_eq(&first, &second));
+        let held = first.lock().unwrap();
+        assert!(second.try_lock().is_err());
+        assert!(turn(&there).try_lock().is_ok());
+        drop(held);
+        assert!(second.try_lock().is_ok());
+    }
 
     #[test]
     fn hosts_in_included_files_are_listed_once() {

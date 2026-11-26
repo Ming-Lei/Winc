@@ -50,11 +50,14 @@ foreach ($kind in @('nsis', 'msi')) {
         if ((Get-CommandPath $kind) -notcontains "$directory\bin") { throw "${kind}: bin is not on the Path" }
         if ((Get-Content "$directory/winc-installation" -Raw).Trim() -ne $kind) { throw 'incorrect installation marker' }
         # Each type's ProgID shows the document icon of its group.
-        foreach ($pair in @(@('JSON', 'json'), @('MD', 'markdown'), @('RS', 'rust'), @('SQL', 'code'), @('TEX', 'markup'), @('PDF', 'text'))) {
+        foreach ($pair in @(@('JSON', 'json'), @('MD', 'markdown'), @('RS', 'rust'), @('SQL', 'code'), @('TEX', 'markup'), @('PDF', 'text'), @('WINC-PROJECT', 'project'))) {
             $icon = (Get-ItemProperty -LiteralPath "$classes\winc.$($pair[0])\DefaultIcon").'(default)'
             if ($icon -ne "$directory\icons\$($pair[1]).ico") { throw "${kind}: wrong icon for $($pair[0]): $icon" }
             if (-not (Test-Path -LiteralPath $icon)) { throw "${kind}: missing $icon" }
         }
+        # .winc-project is Winc's own type and opens with it by default.
+        $project = (Get-ItemProperty -LiteralPath "$classes\.winc-project").'(default)'
+        if ($project -ne 'winc.WINC-PROJECT') { throw "${kind}: .winc-project does not open with winc: $project" }
         $command = (Get-ItemProperty -LiteralPath "$classes\winc.JSON\shell\open\command").'(default)'
         if ($command -ne "`"$directory\winc.exe`" `"%1`"") { throw "${kind}: wrong open command: $command" }
         if ($null -eq (Get-ItemProperty -LiteralPath "$classes\Applications\winc.exe\SupportedTypes").'.json') { throw "${kind}: json is not a supported type" }
@@ -119,15 +122,31 @@ foreach ($kind in @('nsis', 'msi')) {
         # inlined, and its parameters in `WINC_UPDATE_*` environment variables. Passing them as
         # `-File` arguments would reach a script that no longer declares `param`, leaving every
         # parameter empty.
+        # The application passes the digest it verified the package against when it downloaded it.
         $env:WINC_UPDATE_PARENT = "$($parent.Id)"
         $env:WINC_UPDATE_SETUP = $setup
+        $env:WINC_UPDATE_SHA256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash
         $env:WINC_UPDATE_EXE = "$directory/winc.exe"
         $env:WINC_UPDATE_KIND = $kind
         $env:WINC_UPDATE_RELAUNCH = '0'
+        # The updater counts an NSIS installation that leaves winc.exe unchanged as failed, since
+        # that is how a file still in use shows. Reinstalling the same build must therefore replace
+        # something, so the installed executables first differ from the package. Running the same
+        # MSI again is a maintenance installation that replaces no files, so it stays as installed.
+        if ($kind -eq 'nsis') {
+            foreach ($file in @('winc.exe', 'winc-pty.exe')) {
+                [IO.File]::AppendAllText("$directory/$file", "`0")
+            }
+        }
+        $log = Join-Path (Split-Path -Parent $setup) 'install-error.log'
+        Remove-Item -LiteralPath $log -ErrorAction SilentlyContinue
         & powershell.exe -NoProfile -NonInteractive -Command (Get-Content -LiteralPath $update -Raw)
         $status = $LASTEXITCODE
-        Remove-Item Env:WINC_UPDATE_*
-        if ($status -ne 0) { throw "$kind updater failed" }
+        Remove-Item Env:WINC_UPDATE_* -ErrorAction SilentlyContinue
+        if ($status -ne 0) {
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Write-Host }
+            throw "$kind updater failed"
+        }
         foreach ($file in @('winc.exe', 'winc-pty.exe')) {
             if ((Get-FileHash "$directory/$file").Hash -ne (Get-FileHash "$root/target/$Target/release/$file").Hash) {
                 throw "$kind update changed $file"

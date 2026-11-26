@@ -7,6 +7,8 @@ mod format;
 mod search;
 mod shortcuts;
 mod terminal;
+mod transfer;
+mod vim;
 
 use super::*;
 use winc_config::SmoothCaret;
@@ -116,7 +118,7 @@ fn dragging_the_title_row_moves_the_card_and_keeps_it_in_the_window() {
     assert!(!app.settings_dragging());
     app.on_mouse_up(MouseButton::Left);
 
-    // 关闭后再打开，卡片仍在原处；点在卡片外照常关闭。
+    // 关闭后再打开，卡片仍在原处；点在卡片外仍然关闭。
     app.open_settings();
     assert_eq!(app.settings_layout().card, card);
     app.on_mouse_move(window.right() - 5.0, window.bottom() - 5.0);
@@ -317,12 +319,11 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.config.terminal_enabled = Some(true);
     app.open_settings();
 
-    // 从第一页走到最后一页：依次经过通用到模块各页的每一行、快捷键页的搜索框，最后是关于页的
-    // 各行，到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页
-    // 内容。
-    // 格式化页列出的语言随机器上装了哪些工具而变，步数按全部设置项计算。
+    // 从第一页走到最后一页：依次经过通用到模块各页的每一行、快捷键页的搜索框，最后是关于页的各行，
+    // 到达末尾后不再移动。越过一页的末项时自动换页，右侧显示该页内容。格式化页列出的语言随机器上装
+    // 了哪些工具而变，步数按全部设置项计算。
     let mut seen = vec![app.settings.selected];
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() + 2 {
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() + 2 {
         app.settings_move(true);
         if seen.last() != Some(&app.settings.selected) {
             seen.push(app.settings.selected);
@@ -330,7 +331,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     }
     assert_eq!(
         seen,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
     assert_eq!(app.settings.selected, Setting::License);
     assert_eq!(app.settings_layout().page, SettingsPage::About);
@@ -359,7 +360,7 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, last);
 
     // 回到第一项；步数按全部设置项计算，原因同上。
-    for _ in 0..Setting::all(&app.settings.languages, app.settings_modules()).len() {
+    for _ in 0..Setting::all(&app.settings.listed, app.settings_modules()).len() {
         app.settings_move(false);
     }
     assert_eq!(app.settings.selected, Setting::Language);
@@ -501,7 +502,7 @@ fn settings_pages_are_listed_on_the_left() {
         let view = crate::layout::SettingsView {
             page,
             query: "",
-            languages: &app.settings.languages,
+            listed: &app.settings.listed,
             terminal: 1.0,
             git: 1.0,
             editing: None,
@@ -527,7 +528,7 @@ fn settings_pages_are_listed_on_the_left() {
     }
     assert_eq!(
         listed,
-        Setting::all(&app.settings.languages, app.settings_modules())
+        Setting::all(&app.settings.listed, app.settings_modules())
     );
 
     // 悬停在分类栏的一项上时记录该项；点击后换页，选中该页的第一项，滚动位置回到顶部。
@@ -837,7 +838,7 @@ fn settings_scales_in_and_fades_out() {
     app.open_settings();
     let rest = app.settings_layout().card;
 
-    // 出现途中：卡片整张淡入、放大（缩放只作用于绘制），点击仍按原位置命中。第一帧照常绘制
+    // 出现途中：卡片整张淡入、放大（缩放只作用于绘制），点击仍按原位置命中。第一帧仍然绘制
     // 并保存快照，之后的帧直接使用快照。
     app.settings.motion = Some((true, Clock::frozen(DIALOG_IN / 3, DIALOG_IN)));
     app.settings.cache = None;
@@ -929,7 +930,7 @@ fn the_about_page_shows_the_version_and_the_update_state() {
         assert!(layout.row(setting).is_some(), "{setting:?}");
     }
     assert_eq!(Setting::CheckUpdates.page(), SettingsPage::General);
-    // 顶部是产品信息：图标、名称和版本号；点击版本号复制到剪贴板，点击图标没有反应。
+    // 顶部是产品信息：图标、名称和版本号；点击版本号复制版本信息，点击图标没有反应。
     let row = layout.row(Setting::Version).unwrap().row;
     let parts = crate::layout::ProductParts::new(row);
     let center = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -941,13 +942,14 @@ fn the_about_page_shows_the_version_and_the_update_state() {
     let (x, y) = center(parts.logo);
     assert_eq!(layout.part_at(x, y), None);
     click_part(&mut app, SettingsPart::Copy(Setting::Version));
-    assert_eq!(
-        app.clipboard.copied.as_deref(),
-        Some(&*crate::layout::version_label())
-    );
+    let copied = app.clipboard.copied.clone().unwrap();
+    let first = format!("Winc {}", crate::layout::version_label());
+    assert_eq!(copied.lines().next(), Some(first.as_str()));
+    assert_eq!(copied.lines().count(), 2, "第二行是系统");
+    assert_eq!(app.status.message.as_deref(), Some("已复制版本信息"));
     assert_eq!(app.settings.selected, Setting::Version);
 
-    // 当前版本不检查更新时按钮点了没有反应；能检查时点了交给 Sparkle（测试里不启用）。
+    // 当前版本不检查更新时按钮点击没有反应；能检查时点击交给 Sparkle（测试里不启用）。
     assert!(!app.can_check_updates());
     click_part(&mut app, SettingsPart::Action(Setting::Updates));
     assert_eq!(app.settings.selected, Setting::Updates);
@@ -1170,7 +1172,7 @@ fn smooth_scrolling_switches_off_on_its_own() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 平滑光标移动是编辑器页的下拉选项：默认关闭，两个模式列出当前的选择并写回配置。
+/// 平滑光标是编辑器页的下拉选项：默认关闭，两个模式列出当前的选择并写回配置。
 #[test]
 fn smooth_caret_movement_lists_its_modes() {
     let dir = sample_folder("settings-smooth-caret");
@@ -1239,9 +1241,12 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     let expected = [
         Setting::GitPath,
         Setting::GitOpenWorktree,
+        Setting::GitScanDepth,
         Setting::GitStagingArea,
         Setting::GitTree,
+        Setting::GitCombinedDiff,
         Setting::DiffInline,
+        Setting::DiffCollapse,
         Setting::GitInlineBlame,
         Setting::GitPullMode,
         Setting::GitConfirmPush,
@@ -1258,7 +1263,7 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     assert!(app.switch_on(Setting::GitTree));
     app.settings_toggle(Setting::GitTree);
     assert!(app.git.commit.flat() && !app.state.commit_tree);
-    // 配置文件中打开「显示暂存区」：提交视图随之换成暂存区视图。
+    // 配置文件中打开「暂存区布局」后，提交视图随之切换。
     assert!(!app.git.commit.staging());
     let mut config = app.config.clone();
     config.git_staging_area = Some(true);

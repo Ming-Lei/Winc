@@ -15,7 +15,7 @@ impl App {
         if list_new {
             self.list_new_languages(&file, &project);
         }
-        let listed = &self.settings.languages;
+        let listed = &self.settings.listed;
         let rows = (listed.format.iter().map(|&id| (Task::Format, id)))
             .chain(listed.fix.iter().map(|&id| (Task::Fix, id)));
         self.settings.tool_rows = rows
@@ -41,7 +41,7 @@ impl App {
         }
         let root = self.editor.root();
         let formatter = &self.format.formatter;
-        let listed = &self.settings.languages;
+        let listed = &self.settings.listed;
         let rows = (listed.format.iter().map(|&id| (Task::Format, id)))
             .chain(listed.fix.iter().map(|&id| (Task::Fix, id)));
         let unknown: Vec<Plan> = rows
@@ -81,7 +81,7 @@ impl App {
                 })
                 .map(|l| l.id)
                 .collect();
-            let listed = self.settings.languages.of(task);
+            let listed = self.settings.listed.of(task);
             for id in found {
                 if !listed.contains(&id) {
                     listed.push(id);
@@ -232,7 +232,7 @@ impl App {
                     .filter(|p| tools.iter().any(|t| t == p.program()))
                     .map(|p| p.name)
                     .collect();
-                // 按钮上已经写着该工具时，不再重复它的名字。
+                // 按钮上已经显示该工具时，不再重复它的名字。
                 let warning = if names == [tool.as_str()] {
                     t!("format-tool-not-installed").to_owned()
                 } else {
@@ -306,6 +306,7 @@ impl App {
             Setting::Language
             | Setting::RenderWhitespace
             | Setting::VimClipboard
+            | Setting::VimKey(_)
             | Setting::GitOpenWorktree
             | Setting::GitPullMode
             | Setting::DropFolder
@@ -328,6 +329,7 @@ impl App {
                     Setting::Language => MenuTarget::Locale,
                     Setting::RenderWhitespace => MenuTarget::Whitespace,
                     Setting::VimClipboard => MenuTarget::VimClipboard,
+                    Setting::VimKey(c) => MenuTarget::VimKey(c),
                     Setting::GitOpenWorktree => MenuTarget::OpenWorktree,
                     Setting::GitPullMode => MenuTarget::PullMode,
                     Setting::DropFolder => MenuTarget::DropFolder,
@@ -354,6 +356,10 @@ impl App {
             Setting::TerminalShell => (MenuTarget::DefaultShell, row.control),
             Setting::GitPath | Setting::LatexPath => return self.settings_start_editing(setting),
             Setting::Updates => return self.settings_check_updates(),
+            Setting::ExportSettings => return self.pick(Pick::ExportSettings),
+            Setting::ImportSettings => return self.pick(Pick::ImportSettings),
+            Setting::Keymap => return self.open_keymap_menu_at(row.control),
+            Setting::KeyMatches => return self.show_key_matches(),
             _ => return,
         };
         self.settings.selected = setting;
@@ -398,7 +404,7 @@ impl App {
         task: Task,
         language: &'static Language,
     ) {
-        let listed = self.settings.languages.of(task);
+        let listed = self.settings.listed.of(task);
         if !listed.contains(&language.id) {
             listed.push(language.id);
             self.refresh_format_rows(false);
@@ -421,7 +427,7 @@ impl App {
     /// 「添加语言…」。
     pub(super) fn settings_remove_language(&mut self, task: Task, id: &'static str) {
         let setting = tool_setting_of(task, id);
-        let listed = self.settings.languages.of(task);
+        let listed = self.settings.listed.of(task);
         let Some(index) = listed.iter().position(|&l| l == id) else {
             return;
         };

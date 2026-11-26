@@ -18,15 +18,18 @@ pub use controls::*;
 pub use keys::*;
 pub use pages::*;
 
-/// 格式化页列出的语言（语言 id）：格式化工具一组，修复工具一组。
+/// 设置页中随状态列出的行：格式化页的各语言，Vim 分组下与快捷键冲突的键。
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ToolLanguages {
+pub struct Listed {
     /// 「格式化工具」一组列出的语言 id。
     pub format: Vec<&'static str>,
     /// 「修复工具」一组列出的语言 id。
     pub fix: Vec<&'static str>,
     /// 「脚本解释器」一组列出的语言 id。
     pub script: Vec<&'static str>,
+    /// 「快捷键冲突」一组列出的键：与 `Ctrl` 组合、Vim 有命令、编辑区也有快捷键的字符；Vim 模式
+    /// 关闭时为空，不列出这一组。
+    pub vim_keys: Vec<char>,
 }
 
 /// 一页中的一组设置项，共用一块底色，可以带标题。
@@ -62,6 +65,8 @@ pub enum Setting {
     HotExit,
     /// 关闭窗口或退出前先确认。
     ConfirmClose,
+    /// macOS 上关闭最后一个窗口时退出应用（`editor.quitOnLastWindowClose`）。
+    QuitOnLastWindowClose,
     /// 启动时打开上次退出时打开的目录和标签。
     RestoreFolder,
     /// 启动时没有可恢复的内容时新建文件（`editor.newFileOnStartup`）。
@@ -70,6 +75,8 @@ pub enum Setting {
     DefaultLanguage,
     /// 粘贴时按内容识别语言（`editor.detectLanguageOnPaste`）。
     DetectLanguageOnPaste,
+    /// 拖动选中的文字来移动或复制（`editor.dragAndDrop`）。
+    DragAndDrop,
     /// 粘滞滚动：滚动时在编辑区顶部钉住当前所在的函数、类和标题。
     StickyScroll,
     /// 光标移动时滑到新位置的方式。
@@ -82,8 +89,13 @@ pub enum Setting {
     VimRelativeNumber,
     /// Vim 模式下复制之后高亮被复制的范围。
     VimYankHighlight,
+    /// 「快捷键冲突」一组中的一行：`Ctrl` 与这个字符的组合交给 Vim 还是编辑器
+    /// （`vim.handleKeys`）。
+    VimKey(char),
     /// 自动换行。
     WordWrap,
+    /// CSV、TSV 按列对齐显示。
+    AlignColumns,
     /// 超长行显示全部内容（`wholeLines`）。
     WholeLines,
     /// 编辑区右侧的缩略图。
@@ -94,10 +106,14 @@ pub enum Setting {
     LineNumbers,
     /// 差异单栏显示。
     DiffInline,
+    /// 差异中折叠较长的未更改内容。
+    DiffCollapse,
     /// 何时显示空格和制表符。
     RenderWhitespace,
     /// 显示状态栏。
     StatusBar,
+    /// 编辑器的标签按文件名加宽，不截短文件名。
+    FullTabNames,
     /// 记住窗口大小和位置。
     RestoreWindow,
     /// 播放界面的过渡动画。
@@ -112,6 +128,8 @@ pub enum Setting {
     BackgroundOpacity,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
+    /// 切换、打开文件时在文件树中定位该文件。
+    AutoReveal,
     /// 预览标签：在文件树中单击文件时在预览标签中打开。
     PreviewOnClick,
     /// Markdown 预览联网加载网址的图片。
@@ -216,8 +234,13 @@ pub enum Setting {
     GitTree,
     /// 提交视图显示暂存区（`git.stagingArea`）；关闭时用勾选决定提交的内容。
     GitStagingArea,
+    /// 点击提交视图中的文件时在「未提交的更改」标签中查看（`git.combinedDiff`）；与差异标题栏
+    /// 和「未提交的更改」工具栏上的按钮是同一个开关。
+    GitCombinedDiff,
     /// 点击工作树时在哪个窗口打开它（`git.openWorktree`）。
     GitOpenWorktree,
+    /// 在打开的目录下查找仓库的层数（`git.repositoryScanDepth`）。
+    GitScanDepth,
     /// 拉取、同步时合并还是变基（`git.pull`）。
     GitPullMode,
     /// 把目录拖进已打开目录的窗口时怎样处理（`dropFolder`）。
@@ -234,6 +257,14 @@ pub enum Setting {
     ExplorerMenu,
     /// 把 Winc 列为各文件类型的候选程序（Windows 上由安装程序装在当前用户之下时）。
     FileAssociations,
+    /// 把配置文件导出为一个文件。
+    ExportSettings,
+    /// 用导出的文件替换当前的配置。
+    ImportSettings,
+    /// 键位方案；只在搜索结果中作为一行列出，「快捷键」页顶部另有一份。
+    Keymap,
+    /// 搜索结果中名称或按键与搜索内容相符的命令：点击后在「快捷键」页中查看。
+    KeyMatches,
     /// 「快捷键」页顶部的搜索框。
     ///
     /// 该页没有设置项，选中这一项即表示停留在该页。
@@ -249,8 +280,8 @@ impl Setting {
 
     /// 返回搜索 `query` 时列出的设置项，顺序与搜索结果中从上到下的顺序相同（见
     /// [`search_sections`]）；键盘上下移动按此顺序进行。
-    pub fn found(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
-        (search_sections(query, languages, modules).into_iter())
+    pub fn found(query: &str, listed: &Listed, modules: Modules) -> Vec<Setting> {
+        (search_sections(query, listed, modules).into_iter())
             .flat_map(|section| section.items)
             .collect()
     }
@@ -259,13 +290,13 @@ impl Setting {
     /// 每页从上到下。
     ///
     /// 键盘上下移动按此顺序进行，越过一页的首尾时切换到相邻页。
-    pub fn all(languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
+    pub fn all(listed: &Listed, modules: Modules) -> Vec<Setting> {
         SettingsPage::listed(modules)
             .flat_map(|page| match page {
                 // 「快捷键」页没有设置项，移动到该页即选中该页的搜索框。
                 SettingsPage::Keys => vec![Setting::KeySearch],
                 page => page
-                    .sections(languages)
+                    .sections(listed)
                     .into_iter()
                     .flat_map(|section| section.items)
                     .collect(),
@@ -280,9 +311,10 @@ impl Setting {
             S::Language | S::RestoreFolder | S::NewFileOnStartup | S::RestoreWindow => {
                 SettingsPage::General
             }
-            S::AutoSave | S::HotExit | S::ConfirmClose | S::CheckUpdates | S::SystemProxy => {
+            S::AutoSave | S::HotExit | S::ConfirmClose | S::QuitOnLastWindowClose => {
                 SettingsPage::General
             }
+            S::CheckUpdates | S::SystemProxy => SettingsPage::General,
             S::Theme | S::LightTheme | S::DarkTheme | S::UiFont | S::UiSize | S::FontWeight => {
                 SettingsPage::Appearance
             }
@@ -295,17 +327,19 @@ impl Setting {
             S::EditorFont | S::EditorSize | S::TabWidth | S::LineNumbers | S::WordWrap => {
                 SettingsPage::Editor
             }
+            S::AlignColumns => SettingsPage::Editor,
             S::Minimap | S::StickyScroll | S::RenderWhitespace | S::WholeLines => {
                 SettingsPage::Editor
             }
-            S::SmoothCaret => SettingsPage::Editor,
+            S::SmoothCaret | S::DragAndDrop | S::FullTabNames => SettingsPage::Editor,
             S::DefaultLanguage | S::DetectLanguageOnPaste | S::VimMode | S::VimClipboard => {
                 SettingsPage::Editor
             }
-            S::VimRelativeNumber | S::VimYankHighlight => SettingsPage::Editor,
+            S::VimRelativeNumber | S::VimYankHighlight | S::VimKey(_) => SettingsPage::Editor,
             S::PreviewOnClick | S::DropFolder | S::CompactFolders | S::Outline | S::FindInFiles => {
                 SettingsPage::Files
             }
+            S::AutoReveal => SettingsPage::Files,
             S::MarkdownFont | S::MarkdownSize | S::TextWidth | S::MarkdownLineNumbers => {
                 SettingsPage::Markdown
             }
@@ -328,20 +362,25 @@ impl Setting {
                 SettingsPage::Terminal
             }
             S::TerminalApplicationPriority | S::TerminalOptionAsMeta => SettingsPage::Terminal,
-            S::GitPath | S::GitOpenWorktree | S::GitStagingArea | S::GitTree | S::DiffInline => {
-                SettingsPage::Git
-            }
+            S::GitPath
+            | S::GitOpenWorktree
+            | S::GitStagingArea
+            | S::GitTree
+            | S::DiffInline
+            | S::DiffCollapse => SettingsPage::Git,
+            S::GitCombinedDiff | S::GitScanDepth => SettingsPage::Git,
             S::GitInlineBlame | S::GitPullMode | S::GitConfirmPush | S::GitAutoFetch => {
                 SettingsPage::Git
             }
             S::GitRememberCredentials => SettingsPage::Git,
             S::ExplorerMenu | S::FileAssociations => SettingsPage::General,
+            S::ExportSettings | S::ImportSettings => SettingsPage::General,
             S::GitModule | S::TerminalModule | S::RemoteModule => SettingsPage::Modules,
             S::Version | S::Updates | S::ReleaseNotes | S::Website | S::Repository => {
                 SettingsPage::About
             }
             S::Community | S::License => SettingsPage::About,
-            S::KeySearch => SettingsPage::Keys,
+            S::Keymap | S::KeyMatches | S::KeySearch => SettingsPage::Keys,
         }
     }
 
@@ -360,20 +399,25 @@ impl Setting {
             S::AutoSave => "editor.autoSave",
             S::HotExit => "editor.hotExit",
             S::ConfirmClose => "editor.confirmClose",
+            S::QuitOnLastWindowClose => "editor.quitOnLastWindowClose",
             S::RestoreFolder => "editor.restoreFolder",
             S::NewFileOnStartup => "editor.newFileOnStartup",
             S::DefaultLanguage => "editor.defaultLanguage",
             S::DetectLanguageOnPaste => "editor.detectLanguageOnPaste",
+            S::DragAndDrop => "editor.dragAndDrop",
             S::StickyScroll => "editor.stickyScroll",
             S::SmoothCaret => "editor.smoothCaretMovement",
             S::WordWrap => "editor.wordWrap",
+            S::AlignColumns => "editor.alignColumns",
             S::WholeLines => "editor.wholeLines",
             S::Minimap => "editor.minimap",
             S::Outline => "editor.outline",
             S::LineNumbers => "editor.lineNumbers",
             S::DiffInline => "editor.diffInline",
+            S::DiffCollapse => "editor.diffCollapseUnchanged",
             S::RenderWhitespace => "editor.renderWhitespace",
             S::StatusBar => "editor.statusBar",
+            S::FullTabNames => "editor.fullTabNames",
             S::RestoreWindow => "editor.restoreWindow",
             S::SmoothScrolling => "editor.smoothScrolling",
             S::DropFolder => "editor.dropFolder",
@@ -392,6 +436,7 @@ impl Setting {
             S::BackgroundFit => "ui.backgroundFit",
             S::BackgroundOpacity => "ui.backgroundOpacity",
             S::CompactFolders => "tree.compactFolders",
+            S::AutoReveal => "tree.autoReveal",
             S::PreviewOnClick => "tree.previewOnClick",
             S::RemoteImages => "markdown.remoteImages",
             S::TextWidth => "markdown.textWidth",
@@ -426,15 +471,21 @@ impl Setting {
             S::GitInlineBlame => "git.inlineBlame",
             S::GitAutoFetch => "git.autoFetch",
             S::GitStagingArea => "git.stagingArea",
+            S::GitCombinedDiff => "git.combinedDiff",
             S::GitOpenWorktree => "git.openWorktree",
+            S::GitScanDepth => "git.repositoryScanDepth",
             S::GitPullMode => "git.pull",
             S::GitPath => "git.path",
             S::TerminalModule => "terminal.enabled",
             S::RemoteModule => "remote.enabled",
             S::GitTree | S::FormatCommand(_) | S::FixCommand(_) | S::ScriptCommand(_) | S::AddLanguage => return None,
+            // 各键的归属合在 `vim.handleKeys` 一项中，逐键改写和恢复默认。
+            S::VimKey(_) => return None,
             S::AddFixLanguage | S::Version | S::Updates | S::ReleaseNotes => return None,
             S::Website | S::Repository | S::Community | S::License | S::KeySearch => return None,
+            S::Keymap | S::KeyMatches => return None,
             S::ExplorerMenu | S::FileAssociations => return None,
+            S::ExportSettings | S::ImportSettings => return None,
         })
     }
 
@@ -456,10 +507,12 @@ impl Setting {
             Setting::AutoSave => t!("settings-auto-save"),
             Setting::HotExit => t!("settings-hot-exit"),
             Setting::ConfirmClose => t!("settings-confirm-close"),
+            Setting::QuitOnLastWindowClose => t!("settings-quit-on-last-window-close"),
             Setting::RestoreFolder => t!("settings-restore-folder"),
             Setting::NewFileOnStartup => t!("settings-new-file-on-startup"),
             Setting::DefaultLanguage => t!("settings-default-language"),
             Setting::DetectLanguageOnPaste => t!("settings-detect-language-on-paste"),
+            Setting::DragAndDrop => t!("settings-drag-and-drop"),
             Setting::DropFolder => t!("settings-drop-folder"),
             Setting::FindInFiles => t!("settings-find-in-files"),
             Setting::StickyScroll => t!("settings-sticky-scroll"),
@@ -469,12 +522,15 @@ impl Setting {
             Setting::VimRelativeNumber => t!("settings-vim-relative-number"),
             Setting::VimYankHighlight => t!("settings-vim-yank-highlight"),
             Setting::WordWrap => t!("settings-word-wrap"),
+            Setting::AlignColumns => t!("settings-align-columns"),
             Setting::WholeLines => t!("settings-whole-lines"),
             Setting::Minimap => t!("settings-minimap"),
             Setting::LineNumbers => t!("settings-line-numbers"),
             Setting::DiffInline => t!("settings-diff-inline"),
+            Setting::DiffCollapse => t!("settings-diff-collapse"),
             Setting::RenderWhitespace => t!("settings-render-whitespace"),
             Setting::StatusBar => t!("settings-status-bar"),
+            Setting::FullTabNames => t!("settings-full-tab-names"),
             Setting::RestoreWindow => t!("settings-restore-window"),
             Setting::Animations => t!("settings-animations"),
             Setting::SmoothScrolling => t!("settings-smooth-scrolling"),
@@ -483,6 +539,7 @@ impl Setting {
             Setting::BackgroundOpacity => t!("settings-background-opacity"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
+            Setting::AutoReveal => t!("settings-auto-reveal"),
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
             Setting::RemoteImages => t!("settings-remote-images"),
             Setting::TextWidth => t!("settings-text-width"),
@@ -507,6 +564,7 @@ impl Setting {
             Setting::FormatCommand(id) | Setting::FixCommand(id) | Setting::ScriptCommand(id) => {
                 winc_syntax::find(id).map_or(id, |l| l.name)
             }
+            Setting::VimKey(c) => ctrl_label(c),
             Setting::AddLanguage | Setting::AddFixLanguage => t!("settings-add-language"),
             Setting::TerminalShell => t!("settings-terminal-shell"),
             Setting::TerminalPosition => t!("settings-terminal-position"),
@@ -528,7 +586,9 @@ impl Setting {
             Setting::GitAutoFetch => t!("settings-git-auto-fetch"),
             Setting::GitTree => t!("settings-git-tree"),
             Setting::GitStagingArea => t!("settings-git-staging-area"),
+            Setting::GitCombinedDiff => t!("settings-git-combined-diff"),
             Setting::GitOpenWorktree => t!("settings-git-open-worktree"),
+            Setting::GitScanDepth => t!("settings-git-scan-depth"),
             Setting::GitPullMode => t!("settings-git-pull"),
             Setting::GitPath => t!("settings-git-path"),
             Setting::LatexPath => t!("settings-latex-path"),
@@ -536,7 +596,11 @@ impl Setting {
             Setting::RemoteModule => t!("settings-remote-module"),
             Setting::ExplorerMenu => t!("settings-explorer-menu"),
             Setting::FileAssociations => t!("settings-file-associations"),
+            Setting::ExportSettings => t!("settings-export"),
+            Setting::ImportSettings => t!("settings-import"),
             Setting::KeySearch => t!("settings-key-search"),
+            Setting::Keymap => t!("settings-keys-keymap"),
+            Setting::KeyMatches => t!("settings-key-matches"),
         }
     }
 
@@ -552,16 +616,28 @@ impl Setting {
             };
             return Some(text);
         }
+        // 冲突的键：说明它在编辑区对应的命令。
+        if let Setting::VimKey(c) = self {
+            let stroke = keymap::Stroke {
+                key: keymap::KeyCode::Char(c),
+                mods: keymap::Mods::CTRL,
+            };
+            let binding = keymap::editor_binding(stroke)?;
+            let action = binding.action.title();
+            return Some(Cow::Owned(t!("settings-vim-key-desc", action = action)));
+        }
         let text = match self {
             Setting::SystemTitleBar => Some(t!("settings-system-title-bar-desc")),
             Setting::Zoom => Some(t!("settings-ui-zoom-desc")),
             Setting::AutoSave => Some(t!("settings-auto-save-desc")),
             Setting::HotExit => Some(t!("settings-hot-exit-desc")),
             Setting::ConfirmClose => Some(t!("settings-confirm-close-desc")),
+            Setting::QuitOnLastWindowClose => Some(t!("settings-quit-on-last-window-close-desc")),
             Setting::RestoreFolder => Some(t!("settings-restore-folder-desc")),
             Setting::NewFileOnStartup => Some(t!("settings-new-file-on-startup-desc")),
             Setting::DefaultLanguage => Some(t!("settings-default-language-desc")),
             Setting::DetectLanguageOnPaste => Some(t!("settings-detect-language-on-paste-desc")),
+            Setting::DragAndDrop => Some(t!("settings-drag-and-drop-desc")),
             Setting::DropFolder => Some(t!("settings-drop-folder-desc")),
             Setting::FindInFiles => Some(t!("settings-find-in-files-desc")),
             Setting::StickyScroll => Some(t!("settings-sticky-scroll-desc")),
@@ -570,15 +646,19 @@ impl Setting {
             Setting::VimRelativeNumber => Some(t!("settings-vim-relative-number-desc")),
             Setting::VimYankHighlight => Some(t!("settings-vim-yank-highlight-desc")),
             Setting::WordWrap => Some(t!("settings-word-wrap-desc")),
+            Setting::AlignColumns => Some(t!("settings-align-columns-desc")),
             Setting::WholeLines => Some(t!("settings-whole-lines-desc")),
             Setting::Outline => Some(t!("settings-outline-desc")),
             Setting::CompactFolders => Some(t!("settings-compact-folders-desc")),
+            Setting::AutoReveal => Some(t!("settings-auto-reveal-desc")),
             Setting::PreviewOnClick => Some(t!("settings-preview-on-click-desc")),
             Setting::Minimap => Some(t!("settings-minimap-desc")),
             Setting::LineNumbers => Some(t!("settings-line-numbers-desc")),
             Setting::DiffInline => Some(t!("settings-diff-inline-desc")),
+            Setting::DiffCollapse => Some(t!("settings-diff-collapse-desc")),
             Setting::RenderWhitespace => Some(t!("settings-render-whitespace-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
+            Setting::FullTabNames => Some(t!("settings-full-tab-names-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
             Setting::Animations => Some(t!("settings-animations-desc")),
             Setting::SmoothScrolling => Some(t!("settings-smooth-scrolling-desc")),
@@ -598,6 +678,8 @@ impl Setting {
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
             Setting::Updates => Some(t!("settings-updates-off")),
+            Setting::Keymap => Some(t!("settings-keys-keymap-description")),
+            Setting::KeyMatches => Some(t!("settings-key-matches-desc")),
             Setting::FormatOnSave => Some(t!("settings-format-on-save-desc")),
             Setting::FixOnSave => Some(t!("settings-fix-on-save-desc")),
             Setting::SkipOnSave => Some(t!("settings-skip-on-save-desc")),
@@ -605,6 +687,8 @@ impl Setting {
             Setting::RemoteModule => Some(t!("settings-remote-module-desc")),
             Setting::ExplorerMenu => Some(t!("settings-explorer-menu-desc")),
             Setting::FileAssociations => Some(t!("settings-file-associations-desc")),
+            Setting::ExportSettings => Some(t!("settings-export-desc")),
+            Setting::ImportSettings => Some(t!("settings-import-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
             Setting::GitRememberCredentials => Some(t!("settings-git-remember-credentials-desc")),
             Setting::SystemProxy => Some(t!("settings-system-proxy-desc")),
@@ -612,7 +696,9 @@ impl Setting {
             Setting::GitAutoFetch => Some(t!("settings-git-auto-fetch-desc")),
             Setting::GitTree => Some(t!("settings-git-tree-desc")),
             Setting::GitStagingArea => Some(t!("settings-git-staging-area-desc")),
+            Setting::GitCombinedDiff => Some(t!("settings-git-combined-diff-desc")),
             Setting::GitOpenWorktree => Some(t!("settings-git-open-worktree-desc")),
+            Setting::GitScanDepth => Some(t!("settings-git-scan-depth-desc")),
             Setting::GitPullMode => Some(t!("settings-git-pull-desc")),
             Setting::GitPath => Some(t!("settings-git-path-desc")),
             Setting::LatexPath => Some(t!("settings-latex-path-desc")),
@@ -646,28 +732,35 @@ impl Setting {
             | Setting::TerminalSize
             | Setting::TerminalFontWeight
             | Setting::MarkdownSize
-            | Setting::TabWidth => SettingControl::Stepper,
+            | Setting::TabWidth
+            | Setting::GitScanDepth => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
             | Setting::HotExit
             | Setting::ConfirmClose
+            | Setting::QuitOnLastWindowClose
             | Setting::RestoreFolder
             | Setting::NewFileOnStartup
             | Setting::DetectLanguageOnPaste
+            | Setting::DragAndDrop
             | Setting::CompactFolders
+            | Setting::AutoReveal
             | Setting::PreviewOnClick
             | Setting::StickyScroll
             | Setting::VimMode
             | Setting::VimRelativeNumber
             | Setting::VimYankHighlight
             | Setting::WordWrap
+            | Setting::AlignColumns
             | Setting::WholeLines
             | Setting::Minimap
             | Setting::Outline
             | Setting::LineNumbers
             | Setting::DiffInline
+            | Setting::DiffCollapse
             | Setting::StatusBar
+            | Setting::FullTabNames
             | Setting::RestoreWindow
             | Setting::Animations
             | Setting::SmoothScrolling
@@ -688,6 +781,7 @@ impl Setting {
             | Setting::GitAutoFetch
             | Setting::GitTree
             | Setting::GitStagingArea
+            | Setting::GitCombinedDiff
             | Setting::ExplorerMenu
             | Setting::FileAssociations
             | Setting::TerminalModule
@@ -712,6 +806,7 @@ impl Setting {
             | Setting::Zoom
             | Setting::RenderWhitespace
             | Setting::VimClipboard
+            | Setting::VimKey(_)
             | Setting::TerminalPosition
             | Setting::TerminalTabPosition
             | Setting::TerminalOptionAsMeta
@@ -720,7 +815,8 @@ impl Setting {
             | Setting::AutoSave
             | Setting::SmoothCaret
             | Setting::GitOpenWorktree
-            | Setting::GitPullMode => SettingControl::Choice,
+            | Setting::GitPullMode
+            | Setting::Keymap => SettingControl::Choice,
             Setting::AddLanguage | Setting::AddFixLanguage => SettingControl::Action,
             Setting::KeySearch => SettingControl::Search,
             Setting::Version => SettingControl::Product,
@@ -729,7 +825,8 @@ impl Setting {
             | Setting::Repository
             | Setting::Community
             | Setting::License => SettingControl::Link,
-            Setting::Updates => SettingControl::Button,
+            Setting::Updates | Setting::KeyMatches => SettingControl::Button,
+            Setting::ExportSettings | Setting::ImportSettings => SettingControl::Button,
         }
     }
 }
@@ -820,6 +917,8 @@ pub enum SettingsPart {
     KeyEdit(keymap::Action),
     /// 悬停在改过的一行上时出现的「恢复默认」。
     KeyReset(keymap::Action),
+    /// 悬停在被 Vim 占用的一行上时出现的「查看冲突」：打开设置中这个 `Ctrl` 键的归属。
+    KeyVim(keymap::Action, char),
     /// 修改快捷键时第几个已有的键上的 ×。
     KeyRemove(usize),
     /// 修改快捷键时的「保存」。
@@ -843,8 +942,8 @@ pub struct SettingsView<'a> {
     pub page: SettingsPage,
     /// 分类栏顶部搜索框中的文字；不为空白时正文换成搜索结果。
     pub query: &'a str,
-    /// 格式化页列出的语言。
-    pub languages: &'a ToolLanguages,
+    /// 随状态列出的行（格式化页的语言、Vim 的冲突键）。
+    pub listed: &'a Listed,
     /// 分类栏中「终端」一项的显示比例（0 到 1，开关终端模块时渐变，见
     /// [`SettingsPage::listed`]）。
     pub terminal: f32,
@@ -882,24 +981,31 @@ pub fn settings_card(window: Rect, (dx, dy): (f32, f32)) -> Rect {
 /// （[`Setting::matches`]）合为一组，以页名为标题；页名或组标题含有 `query` 时是该页或该组的
 /// 全部设置项。
 ///
-/// 各组按页的顺序排列，组内按页内的顺序；「快捷键」页和组下方的文字按钮不参与搜索。`modules` 为
-/// 各模块是否开启（见 [`SettingsPage::listed`]）。
-pub fn search_sections(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Section> {
+/// 各组按页的顺序排列，组内按页内的顺序；组下方的文字按钮不参与搜索。「快捷键」页列出键位方案
+/// （[`Setting::Keymap`]），以及有命令的名称或按键与 `query` 相符时的 [`Setting::KeyMatches`]。
+/// `modules` 为各模块是否开启（见 [`SettingsPage::listed`]）。
+pub fn search_sections(query: &str, listed: &Listed, modules: Modules) -> Vec<Section> {
     let query = query.trim().to_lowercase();
     let query = query.as_str();
     let named = move |title: &str| title.to_lowercase().contains(query);
-    let pages = SettingsPage::listed(modules).filter(|&page| page != SettingsPage::Keys);
-    let found = pages.map(|page| {
+    let found = SettingsPage::listed(modules).map(|page| {
         let whole = named(page.title());
-        let items = page.sections(languages).into_iter().flat_map(|section| {
-            let whole = whole || section.title.is_some_and(named);
-            (section.items.into_iter())
-                .filter(|s| s.control() != SettingControl::Action)
-                .filter(move |s| whole || s.matches(query))
-        });
+        let items: Vec<Setting> = if page == SettingsPage::Keys {
+            let keymap = (whole || Setting::Keymap.matches(query)).then_some(Setting::Keymap);
+            let commands = (crate::keymap::count_matches(query) > 0).then_some(Setting::KeyMatches);
+            keymap.into_iter().chain(commands).collect()
+        } else {
+            let items = page.sections(listed).into_iter().flat_map(|section| {
+                let whole = whole || section.title.is_some_and(named);
+                (section.items.into_iter())
+                    .filter(|s| s.control() != SettingControl::Action)
+                    .filter(move |s| whole || s.matches(query))
+            });
+            items.collect()
+        };
         Section {
             title: Some(page.title()),
-            items: items.collect(),
+            items,
         }
     });
     let found: Vec<Section> = found.filter(|s| !s.items.is_empty()).collect();
@@ -971,7 +1077,7 @@ impl SettingsLayout {
         let &SettingsView {
             page,
             query,
-            languages,
+            listed,
             terminal,
             git,
             editing,
@@ -1036,9 +1142,9 @@ impl SettingsLayout {
                 git: git > 0.0,
                 terminal: terminal > 0.0,
             };
-            search_sections(query, languages, modules)
+            search_sections(query, listed, modules)
         } else {
-            page.sections(languages)
+            page.sections(listed)
         };
         for (i, section) in sections.into_iter().enumerate() {
             if i > 0 {

@@ -355,7 +355,9 @@ fn bookmark_commands_are_available_in_the_editor_menu() {
 
     let menu = |bookmarked| crate::app::ContextMenu {
         target: crate::app::input::context_menu::MenuTarget::Editor(id),
-        entries: crate::app::input::context_menu::editor_menu(true, false, bookmarked, false),
+        entries: crate::app::input::context_menu::editor_menu(
+            true, false, bookmarked, false, false, true,
+        ),
         branches: Vec::new(),
         stashes: Vec::new(),
         popup: None,
@@ -444,7 +446,7 @@ fn menus_without_a_system_menu_are_drawn_in_the_window() {
     paint(&mut app);
     assert_eq!(app.popup().unwrap().levels[1].parent, Some(1));
 
-    // 点子菜单里的一项：执行这项命令（以 UTF-8 保存，文件本来就是 UTF-8，没有可见的变化），
+    // 点子菜单里的一项：执行这项命令（以 UTF-8 保存，文件原本就是 UTF-8，没有可见的变化），
     // 菜单关掉，状态栏的按钮放开。
     let sub = app.popup().unwrap().levels[1].clone();
     let utf8 = sub
@@ -486,6 +488,44 @@ fn menus_without_a_system_menu_are_drawn_in_the_window() {
     app.on_mouse_up(MouseButton::Left);
     assert!(app.overlays.context_menu.is_none());
     assert_eq!(app.editor.active().unwrap().selection, caret);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归：窗口内的菜单和提示框为模态，打开后即显示箭头，即使鼠标下方是文字；提示框打开期间，
+/// 下方的标签不显示悬停，按住主修饰键滚动也不缩放编辑区。关掉以后鼠标不动，指针也回到文字上的
+/// 文本光标。
+#[test]
+fn menus_and_alerts_drawn_in_the_window_cover_what_is_below() {
+    use crate::app::AlertButton;
+    use winit::keyboard::{Key, NamedKey};
+    use winit::window::CursorIcon;
+
+    let dir = sample_folder("modal-pointer");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    paint(&mut app);
+    let l = app.layout.text;
+    let text = (l.x + 8.0, l.y + app.fonts.line_height / 2.0);
+    right_click(&mut app, text);
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Default);
+    app.popup_logical_key(&Key::Named(NamedKey::Escape));
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Text);
+
+    app.on_mouse_move(text.0, text.1);
+    let buttons = vec![AlertButton::new("好")];
+    assert!(app.show_alert("提示", "", buttons, None, |_, _| None));
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Default);
+    app.pointer.modifiers = command_modifiers();
+    let notch = MouseScrollDelta::LineDelta(0.0, 1.0);
+    app.on_wheel_event(notch, winit::event::TouchPhase::Moved);
+    assert_eq!(app.config.editor_size, None);
+    let tab = app.hits.tabs[0].tab;
+    app.on_mouse_move(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0);
+    paint(&mut app);
+    assert_eq!(app.pointer.hover, Hover::None);
+    app.on_mouse_move(text.0, text.1);
+    assert!(app.alert_key(&Key::Named(NamedKey::Enter), false));
+    assert!(app.overlays.alert.is_none());
+    assert_eq!(app.pointer.cursor_icon, CursorIcon::Text);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -567,7 +607,7 @@ fn typing_filters_the_language_menu() {
     named(&mut app, NamedKey::Escape);
     assert!(app.overlays.context_menu.is_none());
 
-    // 筛选时空格是文字：「Visual Basic」这类名字可以接着键入。
+    // 筛选时空格是文字：「Visual Basic」这类名字可以继续键入。
     app.open_status_menu(StatusItem::Language);
     paint(&mut app);
     typed(&mut app, "a b");

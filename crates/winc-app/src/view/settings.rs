@@ -1,4 +1,4 @@
-//! 设置浮层（⌘,）的绘制：盖住整个窗口的模态卡片，左侧是分类栏，右侧是当前页。
+//! 设置浮层（⌘,）的绘制：遮住整个窗口的模态卡片，左侧是分类栏，右侧是当前页。
 //!
 //! 分类、滚动位置和控件状态来自 `app::settings`；本模块按 [`SettingsLayout`] 给出的
 //! 几何绘制，并记录当前页中各控件的可点击区域。
@@ -76,7 +76,7 @@ pub(crate) fn draw_scrolling(app: &mut App, frame: &mut Frame<'_>) -> bool {
 }
 
 /// 设置浮层出现、消失的动画途中：有开头存下的快照时，直接拿来绘制这一帧，返回 `true`；没有
-/// 快照或窗口尺寸、缩放倍数变化时返回 `false`，照常绘制（绘制时重新保存快照）。
+/// 快照或窗口尺寸、缩放倍数变化时返回 `false`，仍然绘制（绘制时重新保存快照）。
 pub(crate) fn draw_cached(app: &mut App, frame: &mut Frame<'_>) -> bool {
     if app.settings.motion.is_none() {
         return false;
@@ -167,8 +167,8 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) ->
 /// 绘制分类栏：每项一个图标加名称，行样式与文件树的行相同：当前页铺选中底色，悬停的项铺淡底色。
 fn draw_nav(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     for &(page, row) in &layout.pages {
-        // 「Git」「终端」两项随各自的模块淡入淡出（`App::track_modules`），高度在布局中按显示比例收放；
-        // 图标和文字仍按整行的高度居中，不随高度挤压。
+        // 「Git」「终端」两项随各自的模块淡入淡出（`App::track_modules`），
+        // 高度在布局中按显示比例收放；图标和文字仍按整行的高度居中，不随高度挤压。
         let opacity = match page {
             SettingsPage::Terminal => app
                 .motion
@@ -459,6 +459,35 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             draw_product(app, frame, row, clip);
             None
         }
+        SettingControl::Button if row.setting == Setting::KeyMatches => {
+            let count = crate::keymap::count_matches(app.settings.search.text());
+            let label = t!("settings-key-matches-show", count = count);
+            let role = ButtonRole::Normal;
+            draw_action_button(app, frame, row.control, &label, role, true, hovered);
+            None
+        }
+        SettingControl::Button
+            if matches!(
+                row.setting,
+                Setting::ExportSettings | Setting::ImportSettings
+            ) =>
+        {
+            let label = if row.setting == Setting::ExportSettings {
+                t!("settings-export-button")
+            } else {
+                t!("settings-import-button")
+            };
+            draw_action_button(
+                app,
+                frame,
+                row.control,
+                label,
+                ButtonRole::Normal,
+                true,
+                hovered,
+            );
+            None
+        }
         SettingControl::Button => {
             // 不支持应用内更新时说明行已写明原因，不显示按钮；正在检查、下载时按钮变淡。
             if app.updates_supported() {
@@ -484,8 +513,8 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
     }
 }
 
-/// 改过的设置项在名称后面用淡色写「恢复默认」，字号同名称，记下它的位置供悬停和点击；`end` 是名称的末尾，
-/// `line` 是名称所在的一行。鼠标悬停时文字换成强调色。
+/// 改过的设置项在名称后面用淡色写「恢复默认」，字号同名称，记下它的位置供悬停和点击；`end`
+/// 是名称的末尾，`line` 是名称所在的一行。鼠标悬停时文字换成强调色。
 fn draw_reset(
     app: &mut App,
     frame: &mut Frame<'_>,

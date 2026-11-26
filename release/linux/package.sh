@@ -32,6 +32,10 @@ install -Dm755 "${servers[@]}" -t "$deb/usr/lib/winc"
 # File manager context menus and the winc:// link handler belong to the installed package only: the
 # AppImage installs nothing.
 install -m644 release/linux/winc-url-handler.desktop "$deb/usr/share/applications/"
+# The .winc-project type; the shared-mime-info trigger updates the database.
+install -Dm644 release/linux/winc.xml "$deb/usr/share/mime/packages/winc.xml"
+install -Dm644 crates/winc-app/assets/file-icons/project.svg \
+  "$deb/usr/share/icons/hicolor/scalable/mimetypes/application-x-winc-project.svg"
 desktop-file-validate "$deb/usr/share/applications/winc-url-handler.desktop"
 install -Dm644 release/linux/file-manager/winc-open-file.desktop release/linux/file-manager/winc-open-folder.desktop \
   -t "$deb/usr/share/kio/servicemenus"
@@ -45,7 +49,8 @@ Priority: optional
 Architecture: $deb_arch
 Maintainer: DEEIX-AI <41963680+Noxiven@users.noreply.github.com>
 Homepage: https://winc.si
-Depends: libc6 (>= $GLIBC_FLOOR), libgcc-s1, fontconfig, fonts-dejavu-core, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0
+Depends: libc6 (>= $GLIBC_FLOOR), libgcc-s1, fontconfig, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0
+Recommends: fonts-dejavu-core
 Description: A lighter, faster desktop code editor
  A native Rust editor with its own rendering engine, Git integration and terminal.
 EOF

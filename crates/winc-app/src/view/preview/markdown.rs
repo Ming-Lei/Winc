@@ -93,7 +93,8 @@ fn draw_broken_links(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
 /// 在 `area`（窗口坐标，逻辑像素）里画当前文档的 Markdown 预览，分栏时是右半边，只看预览时
 /// 是整个编辑区。
 ///
-/// 排版结果和光标位置写回 `app.preview.markdown`，可点击范围记入 `app.hits`；需要读取的图片记进请求，下一帧再画。
+/// 排版结果和光标位置写回 `app.preview.markdown`，可点击范围记入 `app.hits`；
+/// 需要读取的图片记进请求，下一帧再画。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
     frame.rect(area, p.editor_bg);
@@ -125,6 +126,19 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         (true, _) if left < bars => (bars, width.min(narrowed(bars)).max(1.0)),
         _ => (left, width),
     };
+    // 比正文宽的表格占用两侧留白，左侧让出行号和钉住的标题列表；标题指示条浮在表格之上。
+    let bleed = match has_tables(&parsed) {
+        true => {
+            let floor = match (numbers > 0.0, pinned) {
+                (true, _) => left,
+                (false, true) => pushed.min(left),
+                (false, false) => area.x + pad,
+            };
+            let right = area.right() - pad - (left + width);
+            ((left - floor).max(0.0), right.max(0.0))
+        }
+        false => (0.0, 0.0),
+    };
     // 钉住状态变化时正文按新宽度排版，左边缘从原位置过渡到新位置，与标题列表的过渡同步。
     app.preview.markdown.toc_left = left;
     let left = match (app.preview.markdown.toc_pin, app.preview.markdown.toc_slide) {
@@ -144,6 +158,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         // 可编辑的预览在左侧按原文编行号，代码块里不再另编。
         numbers: app.markdown_line_numbers_on() && !app.markdown_live(),
         tall: (area.h * TALL_SHARE).round().max(TALL_MIN),
+        bleed,
     };
     let source = Arc::as_ptr(&parsed) as usize;
     let live = app.live_editing().then(|| app.live_leaf()).flatten();
@@ -186,6 +201,10 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         }
         old => {
             let hscroll = old.as_ref().map(|l| l.hscroll.clone()).unwrap_or_default();
+            let followed = old
+                .as_ref()
+                .filter(|l| l.source == source && l.live == live_key)
+                .and_then(|l| l.followed);
             // 继续上一帧未完成的排版，或视口移到了保留的范围之外：排版条件和文字都未变，选区、
             // 查找结果和光标位置保留。
             let resumed = old.as_ref().is_some_and(|l| {
@@ -215,7 +234,11 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             let same = (old.as_ref())
                 .filter(|l| l.source == source && l.blocks.len() == parsed.blocks.len());
             let top = drawn_scroll(app.preview.markdown.scroll());
-            let held = same.and_then(|l| l.place_at(top - l.pad));
+            // 顶边在该块里所占的比例：块的高度变了，顶边仍在同一块的相同比例处。
+            let held = same.and_then(|l| {
+                let (i, off) = l.place_at(top - l.pad)?;
+                Some((i, off / room_below(l, i).max(1.0)))
+            });
             let mut window = same.map(|l| l.blocks_in(top - l.pad - area.h, top + area.h * 2.0));
             let mut kept = same.map(|l| l.blocks.clone());
             let was_pending = same.is_some_and(Laid::pending);
@@ -250,8 +273,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     later,
                     Some(near.clone()),
                 );
-                let y = held.map_or(top - pad, |(i, off)| {
-                    laid.tops[i] + off.min(room_below(&laid, i))
+                let y = held.map_or(top - pad, |(i, share)| {
+                    laid.tops[i] + share.min(1.0) * room_below(&laid, i)
                 });
                 let seen = laid.blocks_in(y, y + area.h);
                 let waits = |i: usize| laid.stale.get(i).copied().unwrap_or(false);
@@ -263,8 +286,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             };
             // 分帧排版、图片加载完成、收起或展开标题后，视口顶边所在块的屏幕位置不变。
             let anchored = was_pending || laid.pending() || !loaded.is_empty() || refold;
-            if let Some((i, off)) = held.filter(|_| anchored) {
-                let y = laid.tops[i] + off.min(room_below(&laid, i)) + pad;
+            if let Some((i, share)) = held.filter(|_| anchored) {
+                let y = laid.tops[i] + share.min(1.0) * room_below(&laid, i) + pad;
                 app.preview.markdown.set_scroll(y);
                 still = None;
             }
@@ -275,6 +298,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 app.preview.markdown.memo.keep_only(used);
             }
             laid.hscroll = hscroll;
+            laid.followed = followed;
             laid
         }
     };
@@ -315,11 +339,16 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     } else {
         (f32::NAN, f32::NAN)
     };
-    // 分栏时标出编辑区光标所在的行，便于对照两侧的位置；键盘焦点在预览上时不标出。
-    let caret = (area != app.layout.editor && !app.preview.markdown.focused)
+    // 分栏时编辑区光标在预览上的位置。
+    let mirrored = (area != app.layout.editor)
         .then(|| app.markdown_caret_source())
         .flatten()
         .and_then(|source| laid.caret_point(source));
+    // 标出编辑区光标所在的行，便于对照两侧的位置；键盘焦点在预览上时不标出。
+    let caret = mirrored.filter(|_| !app.preview.markdown.focused);
+    // 预览的文字中同样画出光标；在预览上点击后光标移到点中处，选中文字时不画。
+    let picked = app.preview.markdown.selection.is_none_or(|(a, b)| a == b);
+    let mirrored = mirrored.filter(|_| !app.preview.markdown.focused || picked);
     // 可编辑的预览：文字光标和选区（原文位置），画在预览上。在预览上点过、移过光标或者打过
     // 字之后才显示光标；刚打开、只是阅读时不显示，光标停在文首也不会落在居中的图片旁边。
     let editing = app.live_caret_shown();
@@ -441,7 +470,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     }
                     None => (top, area),
                 };
-                // 可横向滚动的表格中的项：按滚动位置左移，裁剪到正文一栏内。
+                // 可横向滚动的表格中的项：按滚动位置左移，裁剪到表格的显示区域内。
                 let (off, strip) = laid.shift(i, k);
                 let area = strip.map_or(area, |s| area.intersect(fixed(&s)));
                 let left = left - off;
@@ -606,7 +635,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                         frame.polygon(&moved, *color, area);
                     }
                     // 所有块绘制完成后再绘制，使其覆盖在上一块的文字之上。
-                    // 工具栏贴着正文一栏的左边，不随表格横向滚动。
+                    // 工具栏贴着表格显示区域的左边，不随表格横向滚动。
                     Item::Table {
                         rect,
                         align: Some(align),
@@ -684,9 +713,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             &mut app.hits.markdown_links,
         );
     }
-    // 竖条在内容左边的留白正中，宽 2 逻辑像素；画在标题的折叠箭头之后（见 `draw_heading_folds`）。
-    let caret_bar =
-        caret.map(|(_, y, h)| Rect::new(left - pad / 2.0 - 1.0, area.y - scroll + y, 2.0, h));
+    // 画在标题的折叠箭头之后（见 `draw_heading_folds`）。
+    let caret_bar = caret.map(|(_, y, h)| caret_bar(&laid, (y, h), area.y - scroll));
     // 光标的绘制位置：找不到时（空文档、光标在第一块之前）位于内容左上角。
     // 滑动过程中随所在的块移动。
     let live_point = live_caret.map(|source| {
@@ -736,6 +764,16 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let (arrows, covered) = draw_heading_folds(app, frame, area, caret_bar);
     if let Some(bar) = caret_bar.filter(|_| !covered) {
         frame.rect_clipped(bar, p.accent.alpha(0.7), 1.0, area);
+    }
+    // 分栏时在预览的文字中同一位置画出编辑区的光标，与编辑区的光标一同闪烁。
+    if let Some((x, y, h)) = mirrored.filter(|_| app.blink.visible) {
+        let bar = Rect::new(
+            (left + x).round() - 1.0,
+            area.y - scroll + y + 1.0,
+            2.0,
+            h - 2.0,
+        );
+        frame.rect_clipped(bar, p.caret, 1.0, area);
     }
     draw_source_numbers(app, frame, area, &arrows);
     draw_broken_links(app, frame, area);
@@ -802,6 +840,15 @@ fn draw_source_numbers(app: &App, frame: &mut Frame<'_>, area: Rect, skip: &[usi
         let baseline = area.y + y - top;
         frame.text(FontKind::Mono, size, x, baseline, &number, color, area);
     }
+}
+
+/// 分栏时标出编辑区光标所在行的竖条（窗口坐标）：宽 2 逻辑像素，在内容左边的留白正中。
+///
+/// `(y, h)` 是光标的上边缘（内容坐标，含上边距）和高度，`top` 是内容坐标原点的窗口纵坐标。所在
+/// 行是向左展开的表格时，竖条随表格的左边缘左移，不压在表格上。
+pub(crate) fn caret_bar(laid: &Laid, (y, h): (f32, f32), top: f32) -> Rect {
+    let spread = (laid.table_span(y + h / 2.0 - laid.pad)).map_or(0.0, |(x, _)| x.min(0.0));
+    Rect::new(laid.left + spread - laid.pad / 2.0 - 1.0, top + y, 2.0, h)
 }
 
 /// 在标题左边画收起、展开下面一节的箭头：鼠标在标题上时显示，收起的标题一直显示，朝右；
@@ -981,6 +1028,22 @@ const TOC_PINNED_EDGE: f32 = 12.0;
 /// 不足时不让出，列表显示为指示条。
 const TOC_PINNED_BODY: f32 = 600.0 - 2.0 * PAD_NARROW;
 
+/// 文中是否有表格：有表格时才计算两侧留白；没有表格时排版不随留白变化，改变窗口宽度不必重排。
+fn has_tables(parsed: &winc_preview::markdown::Markdown) -> bool {
+    use winc_preview::markdown::Block;
+    fn any_table(blocks: &[Block]) -> bool {
+        blocks.iter().any(|block| match block {
+            Block::Table(..) => true,
+            Block::Quote(_, blocks)
+            | Block::Footnote(_, blocks)
+            | Block::Details { blocks, .. } => any_table(blocks),
+            Block::List(_, items) => items.iter().any(|item| any_table(&item.blocks)),
+            _ => false,
+        })
+    }
+    any_table(&parsed.blocks)
+}
+
 /// 文档是否有标题列表：至少两个文字不为空的标题，与 [`draw_toc`] 的条件相同。
 fn has_outline(parsed: &winc_preview::markdown::Markdown) -> bool {
     let titled = |block: &winc_preview::markdown::Block| match block {
@@ -1112,10 +1175,9 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
     });
     let natural = widest
         .map(|w| (w + inner + TOC_DASH + 10.0 + 8.0 + TOC_PAD).clamp(TOC_WIDTHS.0, TOC_WIDTHS.1));
-    // 钉住的列表靠着正文放在左侧留白里，右边与正文之间留 8，留白不够时变窄（标题省略）；
-    // 窄于 [`TOC_PINNED_MIN`] 时收成指示条，不盖住正文。鼠标停留展开时卡片在指示条处展开、
-    // 盖住指示条，不超出预览的左边。
-    // 可编辑的预览在正文左侧写原文行号：钉住的列表放在行号左边，不盖住行号。
+    // 钉住的列表靠着正文放在左侧留白里，右边与正文之间留 8，留白不够时变窄（标题省略）；窄于
+    // [`TOC_PINNED_MIN`] 时收成指示条，不遮住正文。鼠标停留展开时卡片在指示条处展开、遮住指示条，
+    // 不超出预览的左边。可编辑的预览在正文左侧写原文行号：钉住的列表放在行号左边，不遮住行号。
     let edge = left - numbers - 8.0;
     let room = (edge - (area.x + 4.0)).max(0.0);
     // 正文过渡期间按过渡结束后的位置判断能否容纳列表；取消钉住时按过渡开始前的位置。
@@ -1378,7 +1440,7 @@ fn code_button(
 
 /// 返回代码块 `code`（屏幕坐标，逻辑像素）右上角的复制按钮。
 ///
-/// 边长 28 逻辑像素，离代码块右边和上边各 6 逻辑像素（经验值）。
+/// 边长 28 逻辑像素，离代码块右边和上边各 6 逻辑像素（取自调参）。
 pub(crate) fn copy_button(code: Rect) -> Rect {
     const SIZE: f32 = 28.0;
     Rect::new(code.right() - SIZE - 6.0, code.y + 6.0, SIZE, SIZE)

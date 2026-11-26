@@ -181,12 +181,11 @@ pub fn tree_menu(kind: Option<EntryKind>, can_paste: bool, remote: bool) -> Vec<
     menu.push(Separator);
     menu.push(Item(CopyPath, true));
     if kind.is_some() {
-        menu.extend([
-            Item(CopyRelativePath, true),
-            Separator,
-            Item(Rename, true),
-            Item(Delete, true),
-        ]);
+        menu.push(Item(CopyRelativePath, true));
+        if kind == Some(EntryKind::File) {
+            menu.push(Item(CopyAsPrompt, true));
+        }
+        menu.extend([Separator, Item(Rename, true), Item(Delete, true)]);
     }
     menu
 }
@@ -213,13 +212,15 @@ pub fn tree_selection_menu(files: usize, remote: bool) -> Vec<MenuEntry> {
         Separator,
         Item(CopyPath, true),
         Item(CopyRelativePath, true),
-        Separator,
-        Item(Delete, true),
     ]);
+    if files > 0 {
+        menu.push(Item(CopyAsPrompt, true));
+    }
+    menu.extend([Separator, Item(Delete, true)]);
     menu
 }
 
-/// 返回标签栏菜单的菜单项：右键点的是第 `first` 到第 `last` 个标签（从 0 起，只点了一个标签时
+/// 返回标签栏菜单的菜单项：右键点的是第 `first` 到第 `last` 个标签（从 0 起，只点击了一个标签时
 /// 两者相同；多选时是选中的最左、最右一个），其中 `selected` 个是菜单作用的（多选时选中的
 /// 个数，否则是 1），共 `count` 个。
 ///
@@ -276,13 +277,12 @@ pub struct CommitActions {
     pub changes: bool,
 }
 
-/// 日志里一个提交的右键菜单，分组和顺序与 IDEA 的日志菜单相同：复制与拣选；签出与比较；重置、
-/// 还原与撤销；改写历史与推送；指向这个提交的各分支、标签的子菜单，新建分支、标签；转到。
+/// 日志里一个提交的右键菜单，分组和顺序：复制与拣选；签出与比较；重置、还原与撤销；改写历史与推送；
+/// 指向这个提交的各分支、标签的子菜单，新建分支、标签；转到。
 ///
-/// `actions` 说明哪些操作可用。`branch` 是当前分支名（分离的 `HEAD` 时为「HEAD」），写进重置
-/// 子菜单的标题。`branches` 是指向这个提交的分支：名字和该分支的操作（见
-/// [`crate::app::git::branch::branch_ops`]）。分支不超过 [`BRANCH_SUBMENUS`] 个、标签不超过
-/// [`TAG_SUBMENUS`] 个时各自一个子菜单，多了收进「分支」「标签」一个子菜单。
+/// `actions` 说明哪些操作可用，`branch` 是当前分支名（分离的 `HEAD` 时为「HEAD」），写进重置子菜单
+/// 的标题；`branches` 是指向这个提交的分支及其操作（见 [`crate::app::git::branch::branch_ops`]）。
+/// 分支、标签不超过 [`BRANCH_SUBMENUS`]、[`TAG_SUBMENUS`] 个时各自一个子菜单，多了收进一个。
 pub fn log_commit_menu(
     actions: CommitActions,
     branch: &str,
@@ -481,15 +481,20 @@ pub fn commit_selection_menu(any_exists: bool) -> Vec<MenuEntry> {
     ]
 }
 
-/// 返回全局搜索结果里一行的菜单项：打开；文件行是复制路径、复制相对路径、在文件树中显示，
-/// 匹配行是复制这一行的文字；最后是替换（`replace`：替换输入展开着）和从结果中移除。
+/// 返回全局搜索结果里一行的菜单项：打开（目录行没有）；目录、文件行是复制路径、复制相对路径、
+/// 在文件树中显示，匹配行是复制这一行的文字；最后是替换（`replace`：替换输入展开着）和从结果中
+/// 移除。
 ///
-/// `file` 表示右键点着的是文件行。结果都来自打开的目录，因此相对路径、在文件树中显示总是可用。
-pub fn search_result_menu(file: bool, replace: bool) -> Vec<MenuEntry> {
+/// `file` 表示右键点着的是目录或文件行，`dir` 表示是目录行（以树形显示时）。结果都来自打开的
+/// 目录，因此相对路径、在文件树中显示总是可用。
+pub fn search_result_menu(file: bool, dir: bool, replace: bool) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
-    let mut menu = vec![Item(OpenFiles, true), Separator];
+    let mut menu = Vec::new();
+    if !dir {
+        menu.extend([Item(OpenFiles, true), Separator]);
+    }
     if file {
         menu.extend([
             Item(CopyPath, true),
@@ -508,12 +513,6 @@ pub fn search_result_menu(file: bool, replace: bool) -> Vec<MenuEntry> {
     menu
 }
 
-/// 返回编辑区菜单的菜单项：转到定义、查找引用，添加/删除书签、列出书签，格式化（有选区时多一项
-/// 「格式化选中部分」）、修复问题，最后是剪切、复制、粘贴。
-///
-/// `bookmarked` 决定「添加书签」「删除书签」哪个可用。没有选区时剪切、复制作用于光标所在的整行，
-/// 与 `⌘X`、`⌘C` 相同；只读的文件不能格式化、剪切、粘贴。格式化和修复总是可以点击，无法执行时
-/// 点击后说明原因。「粘贴」不检查剪贴板里有没有文字：弹出菜单不应读取其他应用复制的内容。
 /// 返回十六进制视图的右键菜单：复制（写成十六进制）、按文字复制、全选、转到偏移。
 ///
 /// `selected` 为 `false`（空文件）时不能复制。
@@ -529,11 +528,18 @@ pub fn hex_menu(selected: bool) -> Vec<MenuEntry> {
     ]
 }
 
+/// 返回编辑区菜单的菜单项：转到定义与引用、书签、格式化与修复、「比较」子菜单、剪切复制粘贴。
+///
+/// `bookmarked` 决定添加、删除书签哪个可用；只读时不能格式化、剪切、粘贴，`saved` 为假时不能与
+/// 已保存的版本比较。格式化和修复无法执行时点击后说明原因；没有选区时剪切、复制作用于整行。
+/// 「粘贴」「与剪贴板比较」不检查剪贴板：弹出菜单不应读取其他应用复制的内容。
 pub fn editor_menu(
     editable: bool,
     selected: bool,
     bookmarked: bool,
     script: bool,
+    markdown: bool,
+    saved: bool,
 ) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
@@ -555,20 +561,37 @@ pub fn editor_menu(
     if script {
         menu.extend([Separator, Item(RunScript, true)]);
     }
+    // 有选区时比较选中部分，菜单项的文字随之改变。
+    let clipboard = match selected {
+        true => CompareSelectionWithClipboard,
+        false => CompareWithClipboard,
+    };
+    let compare = vec![Item(clipboard, true), Item(CompareWithSaved, saved)];
     menu.extend([
+        Separator,
+        MenuEntry::Submenu(t!("menu-compare").to_owned(), compare),
         Separator,
         Item(Cut, editable),
         Item(Copy, true),
         Item(Paste, editable),
-        Item(CopyReference, true),
     ]);
+    if markdown {
+        menu.push(Item(PastePlain, editable));
+    }
+    menu.push(Item(CopyReference, true));
     menu
 }
 
 /// 返回终端里的菜单项：右键点在命令块上时（`block`：报了命令行，能不能重新运行）先是复制命令、
 /// 复制输出、重新运行；然后复制（有选区时）、粘贴（程序还在运行时）、全选，查找、清屏，最大化
-/// 面板，新建、关闭终端。
-pub fn terminal_menu(selected: bool, running: bool, block: Option<(bool, bool)>) -> Vec<MenuEntry> {
+/// 面板，新建、拆分、移到新分栏（`group`：面板是否在右侧，即移到下方；这一栏是否不止一个
+/// 标签）、关闭终端。
+pub fn terminal_menu(
+    selected: bool,
+    running: bool,
+    block: Option<(bool, bool)>,
+    group: (bool, bool),
+) -> Vec<MenuEntry> {
     use MenuCommand::*;
     use MenuEntry::{Item, Separator};
 
@@ -594,6 +617,8 @@ pub fn terminal_menu(selected: bool, running: bool, block: Option<(bool, bool)>)
         Separator,
         Item(NewTerminal, true),
         Item(SplitTerminal, running),
+        Item(move_group_command(group.0), group.1),
+        Item(MoveTerminalToEditor, true),
         Item(CloseTerminal, true),
     ]);
     menu
@@ -623,15 +648,12 @@ pub fn diff_menu(right: bool, on_hunk: bool, blame: bool) -> Vec<MenuEntry> {
     menu
 }
 
-/// 返回项目名菜单的菜单项：最近的目录（不含当前目录；按住 `⌥` 时是「在新窗口中打开」），之后是
-/// 「新建窗口」「打开目录…」「关闭目录」；有 WSL 发行版时另有「打开 WSL 目录」子菜单，按发行版列出。
+/// 返回项目名菜单的菜单项：最近的目录（不含当前目录；按住 `⌥` 时是「在新窗口中打开」），之后是「新
+/// 建窗口」「打开目录…」「关闭目录」；有 WSL 发行版时另有「打开 WSL 目录」子菜单。
 ///
-/// `recent` 为最近列表的长度，`current` 为当前目录在最近列表中的位置，`opened` 表示是否已经
-/// 打开目录（没有打开时「关闭目录」不可用）。
-///
-/// `hosts` 为 `ssh` 配置中的主机数，远程模块关闭时为 `None`：模块开着时有「连接到 SSH 主机」，
-/// 配置了主机时它是子菜单，按主机列出，末尾是「其他主机…」。`connected` 表示打开的目录在远端
-/// 主机上：这时「关闭目录」之前有「断开 SSH 连接」。
+/// `recent`、`current` 为最近列表的长度和当前目录的位置，`opened` 表示是否已打开目录。`hosts` 为
+/// `ssh` 配置中的主机数，远程模块关闭时为 `None`；有主机时「连接到 SSH 主机」是按主机列出的子
+/// 菜单。`connected` 为真时「关闭目录」之前有「断开 SSH 连接」。
 pub fn project_menu(
     recent: usize,
     current: Option<usize>,
@@ -999,5 +1021,13 @@ pub fn indent_size_title(indent: Indent) -> &'static str {
     match indent {
         Indent::Spaces(_) => t!("menu-indent-size"),
         Indent::Tabs => t!("menu-tab-size"),
+    }
+}
+
+/// 移到新分栏的菜单项：面板在右侧（`right`）时各栏上下排，移到下方，否则移到右侧。
+pub fn move_group_command(right: bool) -> MenuCommand {
+    match right {
+        true => MenuCommand::MoveTerminalDown,
+        false => MenuCommand::MoveTerminalRight,
     }
 }

@@ -45,7 +45,7 @@ editor-large-no-multi-cursor = The file is too large for multi-cursor search
 
 editor-word-wrap-on-large = File too large to wrap
 editor-word-wrap-on-pending = Word wrap on (large file mode)
-editor-word-wrap-on-table = Column-aligned tables can’t be wrapped
+editor-word-wrap-on-table = Column-aligned tables can’t be wrapped; turn off “Align CSV and TSV Columns” to wrap them
 editor-word-wrap-on = Word wrap on
 editor-word-wrap-off = Word wrap off
 editor-fold-large = The file is too large to fold
@@ -138,15 +138,34 @@ editor-large-identity = The file has multiple hard links or belongs to another u
 editor-large-handed-save = Large files can’t be saved as administrator
 editor-moved-while-saving = The file was moved while it was being saved
 editor-large-cannot-compare = The file is too large to compare
+editor-compare-no-text = This tab has no text to compare
+editor-compare-clipboard-empty = The clipboard has no text
+editor-compare-clipboard-too-large = The clipboard text is too large to compare
+editor-compare-clipboard-identical = “{ $name }” matches the clipboard
+editor-compare-clipboard-identical-selection = The selection matches the clipboard
+editor-compare-clipboard-title = Clipboard ↔ { $name }
+editor-compare-saved-untitled = “{ $name }” hasn’t been saved yet
+editor-compare-saved-failed = Couldn’t read “{ $name }”: { $error }
+editor-compare-saved-identical = “{ $name }” matches the saved version
+editor-compare-saved-title = Saved Version ↔ { $name }
+editor-compare-side-clipboard = Clipboard
+editor-compare-side-saved = Saved Version
+editor-compare-side-line = { $name }, line { $line }
+editor-compare-side-lines = { $name }, lines { $first }–{ $last }
 editor-large-utf8-only = The file is too large; it can only be opened as UTF-8
 editor-file-read-only = The file is read-only
 editor-temp-file-failed = Couldn’t create a temporary file
 editor-large-original-truncated = Reading the original file failed or it was truncated; the content is incomplete
 editor-paste-cannot-copy = Can’t copy this item
 editor-paste-into-itself = Can’t copy an item into itself
+editor-download-skipped-special = not a regular file
+editor-download-skipped-link-missing = symbolic link target not found
+editor-download-skipped-link-folder = symbolic link to a folder
+editor-download-skipped-link-loop = symbolic link loop
 editor-open-binary = This file is binary and can’t be opened
 editor-open-too-large = The file is too large ({ $size } MB); the limit is { $limit } GB
 editor-unreadable-not-found = The file doesn’t exist
+editor-new-file = New file, written to disk when saved
 editor-unreadable-permission = No permission to read the file
 editor-unreadable-failed = Reading failed ({ $error })
 editor-unsupported-image = Image
@@ -223,6 +242,7 @@ editor-vim-help-supported = supported
 editor-vim-help-unsupported = unsupported
 editor-vim-help-ex = Command-line commands (the bracketed part is optional)
 editor-vim-help-options = Options for :set (abbreviation in parentheses)
+editor-vim-key-notice = { $key } was handled by Vim, so { $action } didn’t run
 
 ## Copy and paste.
 
@@ -260,3 +280,24 @@ hex-goto-placeholder = 0x4E or 78
 hex-goto-total = { $size } in total
 editor-readonly-hex = The hex view is read-only
 editor-definition-in-dependencies = “{ $name }” isn’t defined in the project; searching dependencies…
+
+## HTTP request files.
+
+editor-http-sending = Sending request…
+editor-http-cancel = Cancel Request
+editor-http-cancelled = Request canceled
+editor-http-received = Received { $status } in { $millis } ms
+editor-http-failed = Couldn’t send the request: { $error }
+editor-http-no-request = No request at the cursor
+editor-http-undefined-variable = Couldn’t send the request: the variable “{ $name }” isn’t defined
+editor-http-response-title = Response: { $request }
+editor-http-binary-body = { $size ->
+    [one] (Binary content, { $size } byte)
+   *[other] (Binary content, { $size } bytes)
+}
+editor-http-body-truncated = { $size ->
+    [one] (Showing the first { $shown } of { $size } byte)
+   *[other] (Showing the first { $shown } of { $size } bytes)
+}
+editor-http-curl-missing = curl wasn’t found
+editor-http-too-large = The response is too large

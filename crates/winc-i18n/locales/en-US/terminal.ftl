@@ -6,6 +6,8 @@ terminal-maximize-panel = Maximize panel
 terminal-restore-panel = Restore panel
 terminal-hide-panel = Hide terminal panel
 terminal-show-panel = Show terminal panel
+terminal-move-to-editor = Move terminal to editor area
+terminal-move-to-panel = Move terminal to panel
 terminal-tab-default-name = Terminal
 terminal-new = New Terminal
 terminal-module-disabled = The terminal module isn’t enabled
@@ -14,6 +16,8 @@ terminal-module-disabled = The terminal module isn’t enabled
 
 terminal-helper-missing = Couldn’t find the terminal helper; reinstall Winc
 terminal-helper-start-failed = Couldn’t start the terminal helper: { $error }
+terminal-start-not-found = Couldn’t find the program “{ $program }”
+terminal-start-failed = Couldn’t start “{ $program }”: { $error }
 terminal-needs-conpty = The terminal needs Windows 10 version 1809 or later
 terminal-helper-exited = The terminal helper exited
 terminal-helper-version-mismatch = The terminal helper’s version doesn’t match Winc; reinstall Winc
@@ -115,3 +119,7 @@ terminal-run-stopped = Stopped
 terminal-run-finished = Completed
 terminal-run-failed = “{ $name }” failed (exit code { $code })
 terminal-run-menu-running = Running · { $command }
+terminal-split-group = { $count ->
+    [one] { $count } terminal
+   *[other] { $count } terminals
+}

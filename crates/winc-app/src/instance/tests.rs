@@ -101,7 +101,7 @@ fn only_private_runtime_dirs_are_used() {
 
 #[cfg(unix)]
 #[test]
-fn paths_are_resolved_before_handing_over() {
+fn paths_keep_symlinks_when_handed_over() {
     let dir = winc_config::files::canonicalize(std::env::temp_dir())
         .unwrap()
         .join(format!("winc-absolute-{}", std::process::id()));
@@ -111,13 +111,20 @@ fn paths_are_resolved_before_handing_over() {
     let link = dir.join("link");
     std::os::unix::fs::symlink(&real, &link).unwrap();
 
-    // 经过符号链接的已有文件、新文件，以及所在目录也还不存在的新文件，都落到真实目录下。
-    assert_eq!(absolute(&link.join("a.txt")), real.join("a.txt"));
-    assert_eq!(absolute(&link.join("new.txt")), real.join("new.txt"));
+    // 经过符号链接的已有文件、新文件，以及所在目录也还不存在的新文件，都保留链接；`.` 和
+    // `..` 按字面消去。
+    assert_eq!(absolute(&link.join("a.txt")), link.join("a.txt"));
+    assert_eq!(absolute(&link.join("new.txt")), link.join("new.txt"));
     assert_eq!(
-        absolute(&link.join("sub/deeper/new.txt")),
-        real.join("sub/deeper/new.txt")
+        absolute(&link.join("sub/./deeper/../new.txt")),
+        link.join("sub/new.txt")
     );
+
+    // 相对路径相对于 shell 记下的当前目录，它与进程的当前目录是同一个目录时才用。
+    assert_eq!(pick_cwd(Some(link.clone()), real.clone()), link);
+    assert_eq!(pick_cwd(Some(dir.clone()), real.clone()), real);
+    assert_eq!(pick_cwd(Some("relative".into()), real.clone()), real);
+    assert_eq!(pick_cwd(None, real.clone()), real);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -212,4 +219,29 @@ fn portable_pipe_tags_ignore_case_and_differ_by_folder() {
     let tag = |path: &str| path_tag(Path::new(path));
     assert_eq!(tag(r"D:\Tools\winc\data"), tag(r"d:\tools\WINC\data"));
     assert_ne!(tag(r"D:\Tools\winc\data"), tag(r"E:\winc\data"));
+}
+
+/// 转交时优先使用 Wayland 的令牌；第一个窗口按窗口系统取对应的令牌；转到后台的进程拿回两者。
+#[test]
+fn launch_tokens_follow_the_window_system() {
+    let tokens = LaunchTokens {
+        wayland: Some("w".to_owned()),
+        x11: Some("x".to_owned()),
+    };
+    assert_eq!(tokens.forwarded(), Some("w"));
+    assert_eq!(tokens.for_window(true).as_deref(), Some("w"));
+    assert_eq!(tokens.for_window(false).as_deref(), Some("x"));
+    #[cfg(unix)]
+    {
+        let env: Vec<_> = tokens.env().collect();
+        assert_eq!(env, [(WAYLAND_TOKEN, "w"), (X11_TOKEN, "x")]);
+        assert_eq!(LaunchTokens::default().env().count(), 0);
+    }
+
+    let x11 = LaunchTokens {
+        wayland: None,
+        x11: Some("x".to_owned()),
+    };
+    assert_eq!(x11.forwarded(), Some("x"));
+    assert_eq!(x11.for_window(true), None);
 }

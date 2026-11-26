@@ -70,11 +70,15 @@ jobs:
       - name: Bundle deb and AppImage
         env:
           LINUXDEPLOY_DEBUG_LOG: ${{ runner.temp }}/linuxdeploy.log
+        run: bash release/linux/package.sh "$TARGET"
+      # The signing key is given only to the step that signs: the packaging tools above are
+      # downloaded programs and do not need it.
+      - name: Sign the update feed
+        env:
           WINC_UPDATE_PRIVATE_KEY: ${{ secrets.WINC_UPDATE_PRIVATE_KEY }}
-        run: |
-          bash release/linux/package.sh "$TARGET"
-          node release/common/sign-updates.mjs --platform "$PLATFORM" --bundle "target/$TARGET/release/bundle"
-          bash release/linux/baseline.sh cargo test --locked -p winc-app updates::tests::release_appcast_matches_packages -- --ignored
+        run: node release/common/sign-updates.mjs --platform "$PLATFORM" --bundle "target/$TARGET/release/bundle"
+      - name: Check the update feed against the packages
+        run: bash release/linux/baseline.sh cargo test --locked -p winc-app updates::tests::release_appcast_matches_packages -- --ignored
       - name: Show linuxdeploy log
         if: always()
         run: cat "$RUNNER_TEMP/linuxdeploy.log" 2>/dev/null || echo "(no linuxdeploy log)"

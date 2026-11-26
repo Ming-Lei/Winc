@@ -3,7 +3,7 @@
 use super::*;
 
 impl App {
-    /// 点了提交视图里的 `target`。
+    /// 点击提交视图里的 `target`。
     pub(in crate::app) fn press_commit(&mut self, target: CommitTarget) {
         // 按下标找文件的目标，状态在绘制以后变过就不处理：下标可能已经指向别的文件。
         let indexed = matches!(
@@ -16,6 +16,7 @@ impl App {
                 | CommitTarget::Dir(_)
                 | CommitTarget::DirCheck(_)
                 | CommitTarget::DirStage(..)
+                | CommitTarget::DirRevert(_)
                 | CommitTarget::Stash(_)
                 | CommitTarget::StashFile(_)
                 | CommitTarget::StashApply(_)
@@ -49,7 +50,8 @@ impl App {
             | CommitTarget::RevertFile(_)
             | CommitTarget::StageFile(..)
             | CommitTarget::GroupStage(_)
-            | CommitTarget::DirStage(..) => self.press_commit_row(target),
+            | CommitTarget::DirStage(..)
+            | CommitTarget::DirRevert(_) => self.press_commit_row(target),
             CommitTarget::OtherRepository(_)
             | CommitTarget::OtherFile(..)
             | CommitTarget::OtherStagedFile(..) => self.press_other(target),
@@ -73,6 +75,11 @@ impl App {
             CommitTarget::OtherStage(..) | CommitTarget::OtherGroupStage(..) => {
                 self.press_other_stage(target);
             }
+            CommitTarget::OtherOpen(..)
+            | CommitTarget::OtherRevert(..)
+            | CommitTarget::OtherGroupRevert(..)
+            | CommitTarget::OtherDirRevert(_)
+            | CommitTarget::OtherDirStage(..) => self.press_other_action(target),
             CommitTarget::OtherBranch(repo) => {
                 self.press_other(CommitTarget::OtherRepository(repo));
                 self.paint_now();
@@ -96,7 +103,9 @@ impl App {
                 self.git_refresh();
             }
             CommitTarget::More => {
-                let rect = self.commit_parts().tools[2].0;
+                let tools = self.commit_parts().tools;
+                let more = tools.iter().find(|(_, t)| *t == CommitTarget::More);
+                let rect = more.map_or(Rect::default(), |(rect, _)| *rect);
                 self.open_button_menu(
                     MenuButton::CommitMore,
                     MenuTarget::CommitMore,
@@ -104,7 +113,9 @@ impl App {
                 );
             }
             CommitTarget::Location => self.open_places(true),
-            CommitTarget::Branch => self.open_branch_picker(GitAnchor::Branch),
+            CommitTarget::Branch | CommitTarget::CurrentBranch => {
+                self.open_branch_picker(GitAnchor::Branch);
+            }
             CommitTarget::Sync => self.git_sync(),
             // 按住 ⌥ 时按钮写的是「提交并推送」（见 `App::commit_pushes`）。
             CommitTarget::Commit if self.commit_pushes() => self.confirm_commit_and_push(),
@@ -213,8 +224,12 @@ impl App {
                     self.request_redraw();
                     return;
                 }
-                // 双击打开文件本身，单击选中并预览差异。
+                // 双击打开文件本身，单击选中并预览差异。同一个文件在两组各有一行时，记下点的是
+                // 哪一行：预览按它所在的组比较，之后用键盘也从这一行移动。
                 let (x, y) = self.pointer.mouse;
+                if let Some(row) = self.commit_row_at(y) {
+                    self.git.commit.cursor = Some(row);
+                }
                 if self.click_count(x, y) >= 2 && self.may_be_file(&path) {
                     self.open_path(&path);
                     self.focus = Focus::Editor;
@@ -223,7 +238,7 @@ impl App {
                 }
             }
             CommitTarget::Sticky(row, level) => {
-                // 先滚到那一行正好停在固定的位置，画面不动；再当作点了那一行。
+                // 先滚到那一行正好停在固定的位置，画面不动；再当作点击了那一行。
                 self.git.commit.scroll =
                     (row as f32 * COMMIT_ROW - level as f32 * COMMIT_ROW).max(0.0);
                 let target = match self.commit_rows().get(row) {
@@ -246,12 +261,18 @@ impl App {
             }
             CommitTarget::RevertFile(i) => {
                 if let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) {
-                    self.confirm_rollback(vec![path]);
+                    self.confirm_commit_rollback(vec![path]);
                 }
             }
             CommitTarget::StageFile(i, on) => {
                 if let Some(path) = self.commit_entry(i).map(|e| e.path.clone()) {
                     self.stage_paths(&[path], on);
+                }
+            }
+            CommitTarget::DirRevert(row) => {
+                let paths = self.commit_dir_files(row);
+                if !paths.is_empty() {
+                    self.confirm_commit_rollback(paths);
                 }
             }
             CommitTarget::DirStage(row, on) => {

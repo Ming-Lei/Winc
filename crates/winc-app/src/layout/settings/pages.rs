@@ -85,8 +85,8 @@ impl SettingsPage {
 
     /// 返回这一页的各组设置项，组内的项从上到下排列。
     ///
-    /// 格式化页中每种语言占一行，`languages` 是要列出的语言。
-    pub fn sections(self, languages: &ToolLanguages) -> Vec<Section> {
+    /// 格式化页中每种语言占一行，Vim 分组下每个冲突的键占一行，由 `listed` 给出。
+    pub fn sections(self, listed: &Listed) -> Vec<Section> {
         use Setting as S;
         let plain = |items: Vec<Setting>| Section { title: None, items };
         let group = |title: &'static str, items: Vec<Setting>| Section {
@@ -95,16 +95,18 @@ impl SettingsPage {
         };
         match self {
             SettingsPage::General => {
+                // 「关闭窗口后退出」只在 macOS 上列出：其他平台上关闭最后一个窗口总是退出。
+                let mut saving = vec![S::AutoSave, S::HotExit, S::ConfirmClose];
+                if cfg!(target_os = "macos") {
+                    saving.push(S::QuitOnLastWindowClose);
+                }
                 let mut sections = vec![
                     group(t!("settings-group-language"), vec![S::Language]),
                     group(
                         t!("settings-group-launch"),
                         vec![S::RestoreFolder, S::NewFileOnStartup, S::RestoreWindow],
                     ),
-                    group(
-                        t!("settings-group-saving"),
-                        vec![S::AutoSave, S::HotExit, S::ConfirmClose],
-                    ),
+                    group(t!("settings-group-saving"), saving),
                     group(
                         t!("settings-group-network"),
                         vec![S::CheckUpdates, S::SystemProxy],
@@ -118,10 +120,14 @@ impl SettingsPage {
                     }
                     sections.push(group(t!("settings-group-integration"), items));
                 }
+                sections.push(group(
+                    t!("settings-group-settings-file"),
+                    vec![S::ExportSettings, S::ImportSettings],
+                ));
                 sections
             }
             SettingsPage::Appearance => {
-                // 平滑滚动只在 macOS 上列出：其他平台上滚轮本来就一格一格立即滚动。系统标题栏只在
+                // 平滑滚动只在 macOS 上列出：其他平台上滚轮原本就一格一格立即滚动。系统标题栏只在
                 // 其他平台列出：macOS 上标题栏总是和内容融为一体。
                 let mut interface = vec![S::Zoom, S::StatusBar, S::Animations];
                 if cfg!(target_os = "macos") {
@@ -154,13 +160,16 @@ impl SettingsPage {
                     vec![
                         S::LineNumbers,
                         S::WordWrap,
+                        S::AlignColumns,
                         S::Minimap,
                         S::StickyScroll,
                         S::SmoothCaret,
                         S::RenderWhitespace,
                         S::WholeLines,
+                        S::FullTabNames,
                     ],
                 ),
+                group(t!("settings-group-behavior"), vec![S::DragAndDrop]),
                 group(
                     t!("settings-group-new-files"),
                     vec![S::DefaultLanguage, S::DetectLanguageOnPaste],
@@ -174,7 +183,15 @@ impl SettingsPage {
                         S::VimYankHighlight,
                     ],
                 ),
-            ],
+                // Vim 模式开着、有冲突的键时列出。
+                group(
+                    t!("settings-group-vim-keys"),
+                    listed.vim_keys.iter().map(|&c| S::VimKey(c)).collect(),
+                ),
+            ]
+            .into_iter()
+            .filter(|section| !section.items.is_empty())
+            .collect(),
             SettingsPage::Files => vec![
                 group(
                     t!("settings-group-opening"),
@@ -182,7 +199,7 @@ impl SettingsPage {
                 ),
                 group(
                     t!("settings-group-sidebar"),
-                    vec![S::CompactFolders, S::Outline, S::FindInFiles],
+                    vec![S::CompactFolders, S::AutoReveal, S::Outline, S::FindInFiles],
                 ),
             ],
             SettingsPage::Markdown => vec![
@@ -240,7 +257,7 @@ impl SettingsPage {
             SettingsPage::Git => vec![
                 group(
                     t!("settings-group-general"),
-                    vec![S::GitPath, S::GitOpenWorktree],
+                    vec![S::GitPath, S::GitOpenWorktree, S::GitScanDepth],
                 ),
                 group(
                     t!("settings-group-commit"),
@@ -248,7 +265,12 @@ impl SettingsPage {
                 ),
                 group(
                     t!("settings-group-diff"),
-                    vec![S::DiffInline, S::GitInlineBlame],
+                    vec![
+                        S::GitCombinedDiff,
+                        S::DiffInline,
+                        S::DiffCollapse,
+                        S::GitInlineBlame,
+                    ],
                 ),
                 group(
                     t!("settings-group-remote"),
@@ -276,11 +298,11 @@ impl SettingsPage {
                     // 没有列出的语言时只有「添加语言…」，直接跟在组标题下面。
                     group(
                         t!("settings-section-format-tools"),
-                        tools(&languages.format, S::FormatCommand, S::AddLanguage),
+                        tools(&listed.format, S::FormatCommand, S::AddLanguage),
                     ),
                     group(
                         t!("settings-section-fix-tools"),
-                        tools(&languages.fix, S::FixCommand, S::AddFixLanguage),
+                        tools(&listed.fix, S::FixCommand, S::AddFixLanguage),
                     ),
                 ]
             }
@@ -313,7 +335,7 @@ impl SettingsPage {
     pub fn first(self) -> Setting {
         match self {
             SettingsPage::Keys => Setting::KeySearch,
-            page => page.sections(&ToolLanguages::default())[0].items[0],
+            page => page.sections(&Listed::default())[0].items[0],
         }
     }
 }

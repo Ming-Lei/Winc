@@ -1,8 +1,54 @@
-//! 编辑区行为的测试：剪贴板、右键菜单、自动保存、`.editorconfig`、状态栏的缩进与编码、
-//! 滚动条标记、书签、CSV 列对齐、自动换行。
+//! 编辑区行为的测试：剪贴板、自动保存、`.editorconfig`、状态栏的缩进与编码、滚动条标记、
+//! 书签、CSV 列对齐、自动换行。
 
 use super::*;
 use crate::keymap::Action;
+
+/// Astro 的 frontmatter 关键字在编辑区确实按语法色绘制，而不只是状态栏识别成 Astro。
+#[test]
+fn astro_frontmatter_uses_syntax_colors() {
+    let dir = sample_folder("astro-syntax-colors");
+    let file = dir.join("page.astro");
+    std::fs::write(
+        &file,
+        "---\nconst name = 'Astro';\n---\n<h1 class=\"title\">{name}</h1>\n",
+    )
+    .unwrap();
+    let mut app = app_with(&file, true);
+    paint(&mut app);
+
+    {
+        let doc = app.editor.active().unwrap();
+        assert_eq!(doc.highlighter.language().id, "astro");
+        assert_eq!(
+            doc.highlighter.known_state(0),
+            Some(winc_syntax::LineState::Start)
+        );
+    }
+
+    let keyword = app.palette.syntax_keyword;
+    let text = app.layout.text;
+    // 只看前两行：第 1 行的 `const` 是 frontmatter 的关键字。第 3 行的 `<h1>` 也会用
+    // `syntax_keyword` 着色（标签与关键字同色），把它算进来会让测试在 frontmatter
+    // 没有被识别时也通过。
+    let bottom = (text.y + app.fonts.line_height * 2.0).min(text.bottom());
+    let mut found = false;
+    let mut y = text.y;
+    while y < bottom && !found {
+        let mut x = text.x;
+        while x < text.right() {
+            if near(pixel(&app, (x, y)), keyword) {
+                found = true;
+                break;
+            }
+            x += 1.0;
+        }
+        y += 1.0;
+    }
+    assert!(found, "Astro frontmatter 关键字没有语法色");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 #[test]
 fn word_highlights_reuse_the_oldest_color_when_full() {
@@ -120,117 +166,6 @@ fn copying_without_a_selection_copies_and_pastes_whole_lines() {
 }
 
 #[test]
-fn right_clicking_the_text_offers_format_cut_copy_paste() {
-    use MenuCommand::{
-        AddBookmark, Copy, CopyReference, Cut, FindReferences, Fix, Format, FormatSelection,
-        GoToDefinition, ListBookmarks, Paste, RemoveBookmark,
-    };
-
-    let dir = search_folder("editor-menu");
-    let mut app = app_with(&dir, false);
-    app.open_path(&dir.join("src/main.rs"));
-    paint(&mut app);
-    // 在第 `line` 行第 `col` 列（均从 0 起）处按右键。
-    let right_click_text = |app: &mut App, line: usize, col: usize| {
-        let t = app.layout.text;
-        let x = t.x + TEXT_PAD + col as f32 * app.metrics.cell;
-        right_click(app, (x, t.y + (line as f32 + 0.5) * app.fonts.line_height));
-    };
-    let selection = |app: &App| {
-        let s = app.editor.active().unwrap().selection;
-        (s.from(), s.to())
-    };
-    let line = |app: &App, n: usize| {
-        let text = app.editor.active().unwrap().text();
-        text.line_content(n).slice().to_string()
-    };
-
-    // 在选区内右键：保留选区，菜单命令作用于该选区。
-    app.select(20, 26);
-    right_click_text(&mut app, 1, 10);
-    let menu = app.overlays.context_menu.as_ref().unwrap();
-    assert!(matches!(menu.target, MenuTarget::Editor(_)));
-    assert_eq!(
-        menu_commands(&app),
-        [
-            (GoToDefinition, true),
-            (FindReferences, true),
-            (AddBookmark, true),
-            (RemoveBookmark, false),
-            (ListBookmarks, true),
-            (Format, true),
-            (FormatSelection, true),
-            (Fix, true),
-            (Cut, true),
-            (Copy, true),
-            (Paste, true),
-            (CopyReference, true)
-        ]
-    );
-    assert_eq!(selection(&app), (20, 26));
-    app.run_menu_command(Copy);
-    assert_eq!(app.clipboard.copied.as_deref(), Some("config"));
-
-    // 该行添加书签后，菜单项变为「删除书签」。
-    right_click_text(&mut app, 1, 10);
-    app.run_menu_command(AddBookmark);
-    right_click_text(&mut app, 1, 10);
-    let enabled = |app: &App, command| {
-        menu_commands(app)
-            .into_iter()
-            .find(|(c, _)| *c == command)
-            .map(|(_, on)| on)
-    };
-    assert_eq!(enabled(&app, AddBookmark), Some(false));
-    assert_eq!(enabled(&app, RemoveBookmark), Some(true));
-    app.run_menu_command(RemoveBookmark);
-    right_click_text(&mut app, 1, 10);
-    assert_eq!(enabled(&app, AddBookmark), Some(true));
-
-    // 在选区外右键：光标移到点击处。没有选区时，剪切的是整行。
-    right_click_text(&mut app, 0, 3);
-    assert_eq!(selection(&app), (3, 3));
-    app.run_menu_command(Cut);
-    assert_eq!(app.clipboard.copied.as_deref(), Some("fn main() {\n"));
-    assert_eq!(line(&app, 0), "    let config = load_config();");
-
-    // 粘贴整行：插入到光标所在行的上方。
-    right_click_text(&mut app, 0, 0);
-    app.run_menu_command(Paste);
-    assert_eq!(line(&app, 0), "fn main() {");
-    assert_eq!(line(&app, 1), "    let config = load_config();");
-
-    // 查找条覆盖的区域不弹出编辑区菜单，右键事件由查找条处理。
-    app.open_search(false);
-    paint(&mut app);
-    let bar = app.layout.search;
-    right_click(&mut app, (bar.x + bar.w / 2.0, bar.y + bar.h / 2.0));
-    assert!(app.overlays.context_menu.is_none());
-
-    // 只读文档：格式化、修复、剪切、粘贴不可用，转到定义、查找引用和复制仍可用。
-    app.editor.active_mut().unwrap().readonly = true;
-    right_click_text(&mut app, 0, 0);
-    assert_eq!(
-        menu_commands(&app),
-        [
-            (GoToDefinition, true),
-            (FindReferences, true),
-            (AddBookmark, true),
-            (RemoveBookmark, false),
-            (ListBookmarks, true),
-            (Format, false),
-            (Fix, false),
-            (Cut, false),
-            (Copy, true),
-            (Paste, false),
-            (CopyReference, true),
-        ]
-    );
-
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn auto_save_writes_on_switching_tabs_and_leaving_the_window() {
     let dir = winc_config::files::canonicalize(sample_folder("auto-save")).unwrap();
     let mut app = app_with(&dir, false);
@@ -308,6 +243,29 @@ fn auto_save_writes_on_switching_tabs_and_leaving_the_window() {
     app.auto_save(&ids);
     assert!(app.editor.active().unwrap().is_dirty());
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 正在询问要不要保存时不自动保存：否则选「不保存」之前修改已经写入磁盘。
+#[test]
+fn auto_save_waits_while_the_close_prompt_is_open() {
+    use std::time::Instant;
+    use winc_config::AutoSave;
+    let dir = winc_config::files::canonicalize(sample_folder("auto-save-prompt")).unwrap();
+    let mut app = app_with(&dir, false);
+    let a = dir.join("a.txt");
+    let before = std::fs::read_to_string(&a).unwrap();
+    app.config.auto_save = Some(AutoSave::OnFocusChange);
+    app.open_path(&a);
+    app.focus = Focus::Editor;
+    app.run(Command::Insert("x".into()));
+    let now = Instant::now();
+    app.auto_save_tick(now);
+    app.close_tab(0);
+    assert!(app.closing_pending());
+    app.focus = Focus::Terminal;
+    app.auto_save_tick(now);
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), before);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -455,6 +413,11 @@ fn comments_follow_the_embedded_language() {
     let vue = "<template>\n  <div>{{ a }}</div>\n</template>\n<script>\nconst a = 1;\n</script>\n\
                <style>\n.a { color: red; }\n</style>\n";
     std::fs::write(dir.join("App.vue"), vue).unwrap();
+    std::fs::write(
+        dir.join("Page.astro"),
+        "---\nconst a = 1;\n---\n<div>{a}</div>\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("notes.md"), "说明\n\n```rust\nlet a = 1;\n```\n").unwrap();
     let text = |app: &App| {
         app.editor
@@ -478,6 +441,17 @@ fn comments_follow_the_embedded_language() {
     assert_eq!(toggle(&mut app, 4), "const a = 1;");
     assert_eq!(toggle(&mut app, 7), "/* .a { color: red; } */");
     assert!(toggle(&mut app, 1).contains("<!-- <div>"), "{}", text(&app));
+
+    // Astro 的 frontmatter 是 TypeScript，注释写 `//`；模板仍是 HTML 注释。
+    app.open_path(&dir.join("Page.astro"));
+    paint(&mut app);
+    assert_eq!(toggle(&mut app, 1), "// const a = 1;");
+    assert_eq!(toggle(&mut app, 1), "const a = 1;");
+    assert!(
+        toggle(&mut app, 3).starts_with("<!-- <div>"),
+        "{}",
+        text(&app)
+    );
 
     app.open_path(&dir.join("notes.md"));
     paint(&mut app);
@@ -765,7 +739,7 @@ fn bookmarks_jump_list_and_survive_closing_and_restarting() {
 #[test]
 fn other_encodings_can_be_reopened_and_saved_from_the_status_bar() {
     use winc_editor::Encoding;
-    use winc_editor::encoding::CHOICES;
+    use winc_editor::encoding::{CHOICES, label};
 
     let dir = std::env::temp_dir().join(format!("winc-encoding-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -786,7 +760,7 @@ fn other_encodings_can_be_reopened_and_saved_from_the_status_bar() {
     // 检测为简体中文，状态栏显示 GB18030：猜测为 GBK 时按其超集 GB18030 记录，
     // 保存时四字节的字符也能写回；该项可点击。
     paint(&mut app);
-    assert_eq!(app.editor.active().unwrap().encoding.label(), "GB18030");
+    assert_eq!(label(app.editor.active().unwrap().encoding), "GB18030");
     assert!(
         app.hits
             .status

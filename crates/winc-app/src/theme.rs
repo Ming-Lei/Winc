@@ -340,7 +340,7 @@ struct Tokens {
     /// 终端的 16 色（黑、红、绿、黄、蓝、品红、青、白，再是各自的亮色），与所在主题的语法色
     /// 同一色系。
     ///
-    /// 除了深色主题的黑、浅色主题的亮白（这两色本来就接近底色），其余 15 色在卡片底色上的
+    /// 除了深色主题的黑、浅色主题的亮白（这两色原本就接近底色），其余 15 色在卡片底色上的
     /// 对比度至少 3:1。
     ansi: [Color; 16],
 }
@@ -557,6 +557,7 @@ impl Palette {
             TokenKind::Inserted => self.syntax_string,
             TokenKind::Deleted => self.error,
             TokenKind::Warning => self.warning,
+            TokenKind::Separator => self.text_dim,
         }
     }
 
@@ -696,9 +697,9 @@ pub const TAB_HEIGHT: f32 = 26.0;
 pub const TAB_GAP: f32 = 4.0;
 /// 第一个文件标签离标签栏左边的距离（逻辑像素），与标签上下的留白相同。
 pub const TAB_INSET: f32 = (TOP_BAR - TAB_HEIGHT) / 2.0;
-/// 标签的最大宽度。
+/// 关掉「完整显示文件名」（`editor.fullTabNames`）时标签的最大宽度。
 ///
-/// 标签宽度贴合文件名，文件名更长时截短；所有标签放不下时横向滚动。
+/// 标签宽度贴合文件名，文件名更长时截短；开着这一项时不设这个上限。所有标签放不下时横向滚动。
 pub const TAB_WIDTH_MAX: f32 = 180.0;
 /// 标签的最小宽度：文件名很短时也不窄于该宽度，留出足够的点击范围。
 pub const TAB_WIDTH_MIN: f32 = 80.0;

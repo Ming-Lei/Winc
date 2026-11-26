@@ -166,8 +166,10 @@ the first deployment.
 For local signing, set the same fingerprint and run `bash release/linux/arch/prepare-repo.sh --tag
 v1.2.3 --out target/winc-arch-v1.2.3` on an Arch machine with the signing key and an authenticated `gh`.
 
-On x86_64 Arch Linux or CachyOS, download and run the installer to configure the signed repository
-and install Winc. The installer runs a full system upgrade and prompts for confirmation.
+On x86_64 Arch Linux or an Arch-based distribution (CachyOS, EndeavourOS, Omarchy and others that
+set `ID_LIKE=arch` or ship `/etc/arch-release`), download and run the installer to configure the
+signed repository and install Winc. The installer runs a full system upgrade and prompts for
+confirmation.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fL -o install-arch.sh \

@@ -92,12 +92,13 @@ struct Shed {
     links: Box<[(Arc<str>, f32, f32)]>,
 }
 
-/// 比正文宽的表格：表格的各项按自然宽度排版，绘制时横向平移、裁剪到正文一栏内。
+/// 比显示区域宽的表格：表格的各项按自然宽度排版，绘制时横向平移、裁剪到显示区域内。
 #[derive(Debug, Clone)]
 pub struct Scroller {
     /// 属于该表格的项（[`LaidBlock::items`] 的序号）。
     pub items: std::ops::Range<u32>,
-    /// 显示表格的区域（块里的坐标）：正文一栏宽，高度含表格下方的滚动条。
+    /// 显示表格的区域（块里的坐标）：正文一栏及两侧可占用的留白（见 [`Cx::bleed`]），
+    /// 高度含表格下方的滚动条。
     pub rect: Rect,
     /// 表格的总宽度（逻辑像素）。
     pub content: f32,
@@ -138,7 +139,7 @@ const TABLE_TEXT: f32 = 0.875;
 /// 可横向滚动的表格下方为滚动条留出的高度（逻辑像素）。
 pub const SCROLL_BAR_ROOM: f32 = 10.0;
 
-/// 高项与矮项的分界（逻辑像素，经验值）：高度超过该值的项算「高的」，每次绘制都检查一遍；
+/// 高项与矮项的分界（逻辑像素，取自调参）：高度超过该值的项算「高的」，每次绘制都检查一遍；
 /// 矮的项按上边缘二分查找。
 const TALL: f32 = 120.0;
 
@@ -649,6 +650,10 @@ pub struct Cx<'a, 'f> {
     pub repeat: u32,
     /// 当前顶层块中各开合标识出现的次数，见 `Cx::toggle_id`。
     pub toggles: HashMap<u64, u32>,
+    /// 比正文一栏宽的表格可以占用的两侧留白（左，右）（逻辑像素），不占用时为 0。
+    ///
+    /// 列宽不受影响，只决定表格摆在哪里、超出多少才横向滚动；左侧只用于不缩进的表格。
+    pub bleed: (f32, f32),
 }
 
 /// 可编辑的预览中光标所在的叶子块：不排版，显示原文。
@@ -962,7 +967,9 @@ impl Cx<'_, '_> {
                 let indent = base * 2.0;
                 // 正文里的编号链到这里（见 `winc_preview::markdown` 的脚注引用）。
                 out.anchors.push((format!("fn-{label}"), y));
-                let flow = self.blocks(blocks, x + indent, y, width - indent, env, out);
+                // 列比缩进还窄时宽度不能为负：其中的图表按宽度缩放字号。
+                let width = (width - indent).max(1.0);
+                let flow = self.blocks(blocks, x + indent, y, width, env, out);
                 let marker = format!("{label}.");
                 self.marker(
                     &marker,
@@ -1198,7 +1205,7 @@ pub fn margins(block: &Block, base: f32, tight: bool) -> (f32, f32) {
     }
 }
 
-/// 折叠块标题的「链接」地址的开头，后面接 `details_id`：点了不是打开链接，是展开、收起。
+/// 折叠块标题的「链接」地址的开头，后面接 `details_id`：点击不是打开链接，而是展开、收起。
 pub const DETAILS: &str = "\u{1}details:";
 
 /// 返回折叠块的内容哈希（见 [`Cx::toggle_id`]）。

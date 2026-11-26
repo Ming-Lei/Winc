@@ -1,6 +1,9 @@
 ; Native current-user installation. Updater invocations use /S and /D=<installation directory>.
 Unicode true
 RequestExecutionLevel user
+; DPI-aware, so Windows does not stretch the installer on scaled displays and blur its text. NSIS
+; keeps the checkboxes on the components page at 16 pixels.
+ManifestDPIAware true
 SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "Sections.nsh"
@@ -75,6 +78,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} CLJS code
   !insertmacro ${Action} CLS markup
   !insertmacro ${Action} CMAKE code
+  !insertmacro ${Action} CODE-WORKSPACE project
   !insertmacro ${Action} CONF config
   !insertmacro ${Action} CPP c
   !insertmacro ${Action} CPPM c
@@ -122,12 +126,14 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} HSC code
   !insertmacro ${Action} HTM markup
   !insertmacro ${Action} HTML markup
+  !insertmacro ${Action} HTTP code
   !insertmacro ${Action} HXX c
   !insertmacro ${Action} INF config
   !insertmacro ${Action} INI config
   !insertmacro ${Action} INL c
   !insertmacro ${Action} INO c
   !insertmacro ${Action} IPP c
+  !insertmacro ${Action} IPR project
   !insertmacro ${Action} IXX c
   !insertmacro ${Action} JAVA code
   !insertmacro ${Action} JBUILDER code
@@ -143,6 +149,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} KT code
   !insertmacro ${Action} KTS code
   !insertmacro ${Action} LESS style
+  !insertmacro ${Action} LIQUID markup
   !insertmacro ${Action} LOG text
   !insertmacro ${Action} LTX markup
   !insertmacro ${Action} LUA code
@@ -163,7 +170,9 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} MTS typescript
   !insertmacro ${Action} NDJSON json
   !insertmacro ${Action} NIX code
+  !insertmacro ${Action} NJK markup
   !insertmacro ${Action} NOMAD code
+  !insertmacro ${Action} NUNJUCKS markup
   !insertmacro ${Action} NUSPEC markup
   !insertmacro ${Action} PATCH text
   !insertmacro ${Action} PDF text
@@ -192,6 +201,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} RAKE code
   !insertmacro ${Action} RB code
   !insertmacro ${Action} RBI code
+  !insertmacro ${Action} REST code
   !insertmacro ${Action} RESX markup
   !insertmacro ${Action} ROCKSPEC code
   !insertmacro ${Action} RPROFILE code
@@ -207,6 +217,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} STAR python
   !insertmacro ${Action} STORYBOARD markup
   !insertmacro ${Action} STY markup
+  !insertmacro ${Action} SUBLIME-PROJECT project
   !insertmacro ${Action} SVELTE markup
   !insertmacro ${Action} SVG markup
   !insertmacro ${Action} SWIFT code
@@ -227,6 +238,7 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro ${Action} VCXPROJ markup
   !insertmacro ${Action} VUE markup
   !insertmacro ${Action} WEBMANIFEST json
+  !insertmacro ${Action} WINC-PROJECT project
   !insertmacro ${Action} WSDL markup
   !insertmacro ${Action} WXML markup
   !insertmacro ${Action} WXS code
@@ -291,6 +303,20 @@ LangString OpenFolderVerb ${LANG_SIMPCHINESE} "在 Winc 中打开"
   !insertmacro RemoveFileTypeVerb ${Type} ${Icon}
   !insertmacro UnlistFileType ${Type} ${Icon}
   DeleteRegKey HKCU "Software\Classes\winc.${Type}"
+!macroend
+
+; .winc-project is Winc's own project file: the extension opens with winc by default. Nothing else
+; claims it, so Windows does not ask which program to use.
+!macro RegisterProjectType
+  WriteRegStr HKCU "Software\Classes\.winc-project" "" "winc.WINC-PROJECT"
+!macroend
+
+; Removes the default program only while it is still winc.
+!macro UnregisterProjectType
+  ReadRegStr $0 HKCU "Software\Classes\.winc-project" ""
+  StrCmp $0 "winc.WINC-PROJECT" 0 +2
+    DeleteRegValue HKCU "Software\Classes\.winc-project" ""
+  DeleteRegKey /ifempty HKCU "Software\Classes\.winc-project"
 !macroend
 
 ; "Open in Winc" on a folder and on the empty space inside one (also the desktop); %V is that folder.
@@ -419,6 +445,7 @@ Section "Winc" SEC_MAIN
   !insertmacro ForEachFileType UnlistFileType
   !insertmacro ForEachFileType RemoveFileTypeVerb
   !insertmacro ForEachFileType RegisterFileType
+  !insertmacro RegisterProjectType
   !insertmacro RegisterUrlScheme
   ; The optional sections below record the choices again when they are selected.
   !insertmacro UnregisterContextMenu
@@ -509,6 +536,7 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\DEEIX\winc"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\winc"
   !insertmacro ForEachFileType UnregisterFileType
+  !insertmacro UnregisterProjectType
   !insertmacro ForEachRetiredFileType UnregisterFileType
   !insertmacro UnregisterContextMenu
   DeleteRegKey HKCU "Software\Classes\Applications\winc.exe"

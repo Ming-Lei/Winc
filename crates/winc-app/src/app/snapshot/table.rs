@@ -1,7 +1,9 @@
 //! 表格预览的测试：xlsx 以表格打开、切换工作表、滚动、磁盘上改动后重新读、损坏的文件，
-//! 以及 csv 的预览和分栏。
+//! csv 的预览和分栏，以及 csv 按文本显示时是否按列对齐。
 
 use winc_editor::{PreviewMode, TableState};
+
+mod split;
 
 use super::*;
 
@@ -43,7 +45,7 @@ fn stored_zip(files: &[(&str, String)]) -> Vec<u8> {
 }
 
 /// 构造一个工作簿的 `.xlsx` 字节内容：工作表「销售」有 `rows` 行（第一行是表头），
-/// C2:D3 合并成一格，写着几行长文字；工作表「备注」只有一格 `note`。
+/// C2:D3 合并成一格，显示几行长文字；工作表「备注」只有一格 `note`。
 ///
 /// 行数由调用方决定：需要滚动的用例给 300 行，需要完整选中一列时给 30 行，最后一行的行号
 /// 因此可以写成断言里的期望值。合并格与带换行的长文字用于卡片与复制的用例。
@@ -194,6 +196,60 @@ fn damaged_workbooks_say_why() {
     app.wait_for_tables();
     let view = app.editor.active().unwrap().table.as_deref().unwrap();
     assert!(matches!(&view.state, TableState::Failed(reason) if !reason.is_empty()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 关闭「CSV、TSV 按列对齐」：已打开的和之后打开的表格都按原文排布，可以自动换行；重新打开后
+/// 恢复对齐，不再换行。
+#[test]
+fn csv_text_can_be_shown_as_written_and_wrapped() {
+    let dir = search_folder("table-as-written");
+    let (path, other) = (dir.join("data.csv"), dir.join("other.tsv"));
+    let long = "x".repeat(300);
+    std::fs::write(&path, format!("id,note,count\n1,{long},3\n")).unwrap();
+    std::fs::write(&other, "a\tb\n").unwrap();
+    let mut app = app_with(&path, false);
+    let columns = |app: &mut App| {
+        let tab = app.editor.active_tab_width();
+        app.editor.active_mut().unwrap().columns(tab).is_some()
+    };
+    paint(&mut app);
+    assert!(columns(&mut app));
+
+    app.settings_toggle(Setting::AlignColumns);
+    assert_eq!(app.config.align_columns, Some(false));
+    assert!(!columns(&mut app));
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    assert!(app.editor.active().unwrap().is_wrapping());
+    app.open_path(&other);
+    assert!(!columns(&mut app), "之后打开的表格也按原文排布");
+
+    app.settings_toggle(Setting::AlignColumns);
+    app.open_path(&path);
+    paint(&mut app);
+    assert!(columns(&mut app));
+    assert!(!app.editor.active().unwrap().is_wrapping());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 截图：关闭按列对齐后的 csv，按原文排布并按列着色，长行自动换行。
+#[test]
+#[ignore = "截图，手动运行"]
+fn shoot_csv_as_written() {
+    let dir = search_folder("table-as-written-shot");
+    let path = dir.join("data.csv");
+    let rows = "1,Alice,\"Paris, France\",3.5\n2,Bob,Berlin,4\n3,Chen,北京,12\n";
+    let note = "a long note that runs past the width of a narrow window ".repeat(3);
+    let text = format!("id,name,city,score,note\n{rows}4,Dana,Oslo,7,{note}\n");
+    std::fs::write(&path, text).unwrap();
+    let mut app = app_with(&path, false);
+    paint(&mut app);
+    shoot(&mut app, "csv-aligned");
+    app.settings_toggle(Setting::AlignColumns);
+    app.settings_toggle(Setting::WordWrap);
+    paint(&mut app);
+    shoot(&mut app, "csv-as-written");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -447,7 +503,7 @@ fn cells_are_selected_copied_and_merged_cells_read_in_full() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 回归：没有单元格的表格（空文件、只有空行、只有表头）照常预览并处理键盘、鼠标和滚轮。
+/// 回归：没有单元格的表格（空文件、只有空行、只有表头）仍然预览并处理键盘、鼠标和滚轮。
 #[test]
 fn tables_without_cells_are_previewed() {
     use winit::keyboard::{Key, NamedKey};
@@ -581,7 +637,7 @@ fn tables_larger_than_the_view_scroll_by_their_scrollbars() {
     assert!((app.table_scroll().0 - max.0).abs() < 1.0);
     shoot(&mut app, "table-scrollbars");
 
-    // 放得下的表格没有滑块，右边缘的格子照常点选。
+    // 放得下的表格没有滑块，右边缘的格子仍然点选。
     std::fs::write(dir.join("small.csv"), "a,b\n1,2\n").unwrap();
     app.open_path(&dir.join("small.csv"));
     app.set_preview_mode(PreviewMode::Preview);

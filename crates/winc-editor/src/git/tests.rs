@@ -5,8 +5,11 @@
 
 use super::*;
 
+mod commit;
+mod discover;
 mod history;
 mod locate;
+mod pathspec;
 
 fn root() -> PathBuf {
     PathBuf::from("/repo")
@@ -673,7 +676,7 @@ fn reading_scopes_one_by_one_finds_the_same_risks() {
     );
     assert_eq!(found, expected);
 
-    // 不认识 `--show-scope` 的 `git`（按 2.25 的样子以 129 退出）：检查照常得出同样的结果。
+    // 不认识 `--show-scope` 的 `git`（按 2.25 的样子以 129 退出）：检查仍然得出同样的结果。
     #[cfg(unix)]
     {
         let fake = dir.join("old-git");
@@ -740,7 +743,7 @@ fn risks_follow_the_configured_hooks_path() {
 }
 
 /// 仓库的配置里有过滤器和 fsmonitor 命令、hooks 目录里有钩子：信任之前读状态、取内容都
-/// 不运行它们，提交被拒绝；信任之后照常运行。
+/// 不运行它们，提交被拒绝；信任之后仍然运行。
 ///
 /// 找不到 `git` 时跳过。
 #[test]
@@ -1019,7 +1022,7 @@ fn unset_wsl_variables_do_not_select_an_empty_index() {
 fn pathspecs_separate_with_forward_slashes() {
     let root = Path::new("/repo");
     let paths = [root.join("src").join("main.rs"), root.join("README.md")];
-    let specs: Vec<OsString> = relative_all(root, &paths).collect();
+    let specs: Vec<OsString> = crate::git::pathspec::relative_all(root, &paths).collect();
     assert_eq!(specs, [":(literal)src/main.rs", ":(literal)README.md"]);
     assert_eq!(slash_path(root, &paths[0]).unwrap(), "src/main.rs");
 }
@@ -1139,41 +1142,6 @@ fn recent_branches_keep_the_latest_switch_of_each_branch() {
         parse_recent_branches(output),
         ["feature/login", "main", "dev"]
     );
-}
-
-#[test]
-fn scanning_finds_nested_repositories_within_the_depth() {
-    let dir = crate::test_util::scratch("git-scan");
-    let mark = |path: &str| std::fs::create_dir_all(dir.join(path).join(".git")).unwrap();
-    mark("a");
-    mark("group/b");
-    mark("group/deep/c");
-    // 找到的仓库不再往里找；依赖目录、隐藏目录都跳过。
-    mark("a/inner");
-    mark("node_modules/pkg");
-    mark(".cache/d");
-
-    let names = |depth| -> Vec<PathBuf> {
-        scan_repositories(&dir, depth, &Cancel::default())
-            .into_iter()
-            .map(|path| path.strip_prefix(&dir).unwrap().to_path_buf())
-            .collect()
-    };
-    assert_eq!(names(1), [PathBuf::from("a")]);
-    assert_eq!(names(2), [PathBuf::from("a"), PathBuf::from("group/b")]);
-    assert_eq!(
-        names(3),
-        [
-            PathBuf::from("a"),
-            PathBuf::from("group/b"),
-            PathBuf::from("group/deep/c"),
-        ]
-    );
-
-    let cancelled = Cancel::default();
-    cancelled.cancel();
-    assert!(scan_repositories(&dir, 3, &cancelled).is_empty());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// 启动要求 HTTP 基本认证的本地服务：总是返回 401，并把收到的 `Authorization` 写入通道。

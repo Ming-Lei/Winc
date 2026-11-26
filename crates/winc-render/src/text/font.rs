@@ -1,7 +1,7 @@
 //! 字体：按需 mmap 字体文件，不扫描系统字体库。
 //!
 //! 槽位依次是等宽字体、界面字体、等宽字体的斜体、数学字体、终端字体及其斜体、预览正文字体，
-//! 其后是按优先级排列的后备字体；终端的字重与其余文字不同时，接着是按终端字重打开的另一份
+//! 其后是按优先级排列的后备字体；终端的字重与其余文字不同时，之后是按终端字重打开的另一份
 //! 后备字体（彩色 emoji 除外）。最后是用户在字体列表中写在主字体之后的字体。斜体和后备字体
 //! 在首次需要时才映射文件。候选路径按平台给出，用户配置的字体排在最前面。
 
@@ -52,7 +52,9 @@ impl FontKind {
     }
 }
 
-/// 选后备字体时最多尝试的 fontconfig 结果数（经验值）：系统里没有合适的字体时不逐个打开全部字体。
+/// 选后备字体时最多尝试的 fontconfig 结果数（个）。
+///
+/// 取自调参：系统里没有合适的字体时不逐个打开全部字体。
 const SORTED_FONTS: usize = 64;
 
 /// 一个已经打开的字体文件。
@@ -563,7 +565,7 @@ pub(crate) fn italic_slot(slot: u8) -> bool {
 
 /// 字符解析结果缓存的最大项数（项，65536）。
 ///
-/// 缓存项随出现过的字符数增长，满了就整体清空。该值是经验值。
+/// 缓存项随出现过的字符数增长，满了就整体清空。该值取自调参。
 const RESOLVED_ENTRIES: usize = 1 << 16;
 
 /// 全部字体槽位及字符解析缓存。
@@ -591,6 +593,12 @@ pub(crate) struct Fonts {
     listed: [Range<u8>; 3],
     /// 预览正文字体的列表中写在主字体之后的字体所在的槽位，依次尝试。
     prose_listed: Vec<u8>,
+    /// 等宽字体是否来自用户配置。来自配置时只用于编辑区和终端，不作为界面、预览正文和公式的
+    /// 缺字后备。
+    mono_configured: bool,
+    /// 界面字体是否来自用户配置。来自配置时只用于界面、预览正文和公式，不作为编辑区和终端的
+    /// 缺字后备。
+    ui_configured: bool,
 }
 
 impl Fonts {
@@ -647,18 +655,18 @@ impl Fonts {
             .or_else(|| first_opened(&candidates.mono, shift))
             .expect("等宽字体刚刚成功打开过");
 
+        let mono_configured = listed[0].contains(&mono_file);
+        let ui_configured = listed[1].contains(&ui_file);
         let italic = italic_candidates(&mono_file, &mono);
         // 数学字体一开始就映射（只是映射文件，很快）：度量要用到它，`metrics` 不能再去加载。
         let math = first_existing(&candidates.math, shift).map_or(Slot::Missing, Slot::Ready);
         // 终端字重与其余文字不同时不能借用等宽、界面字体的槽位：按与字重相同时一样的顺序（终端的
-        // 列表，再是选定的等宽字体及其列表、界面字体及其列表）列出，全部按终端的字重打开；相同的
-        // 文件只列一次。
+        // 列表，再是选定的等宽字体及其列表、界面字体）列出，全部按终端的字重打开；界面字体来自
+        // 用户配置时略去，相同的文件只列一次。
         let mut terminal_files = listed[2].clone();
         if separate_terminal {
-            let rest = std::iter::once(&mono_file)
-                .chain(&listed[0])
-                .chain(std::iter::once(&ui_file))
-                .chain(&listed[1]);
+            let ui_file = (!ui_configured).then_some(&ui_file);
+            let rest = std::iter::once(&mono_file).chain(&listed[0]).chain(ui_file);
             for file in rest {
                 if !terminal_files.contains(file) {
                     terminal_files.push(file.clone());
@@ -737,6 +745,8 @@ impl Fonts {
             emoji,
             listed,
             prose_listed: Vec::new(),
+            mono_configured,
+            ui_configured,
         };
 
         for kind in [FontKind::Mono, FontKind::Ui, FontKind::Math] {
@@ -788,7 +798,7 @@ impl Fonts {
 
     /// 按 `kind` 主槽位中的字体填写 ASCII 快速路径；槽位中还没有字体时什么也不做。
     ///
-    /// 斜体槽位确定没有可用的字体（`Missing`）时，注释里的 ASCII 字符本来就落到正体上（绘制时
+    /// 斜体槽位确定没有可用的字体（`Missing`）时，注释里的 ASCII 字符落到正体上（绘制时
     /// 再斜切），按正体填写，同样走快速路径；斜体还没加载（`Pending`）时不填，以免先把正体占上。
     fn fill_ascii(&mut self, kind: FontKind) {
         let primary = self.primary(kind);
@@ -875,8 +885,8 @@ impl Fonts {
 
     /// 返回能显示字符 `c` 的（槽位，字形 id）。
     ///
-    /// 依次尝试 `kind` 对应的主字体、另一种主字体和各后备字体，必要时才映射文件。所有字体都没有
-    /// 该字符时返回（主槽位，0），即该字体的 `.notdef` 字形。
+    /// 依次尝试 `kind` 对应的主字体、另一种主字体和各后备字体，必要时才映射文件；另一种主字体
+    /// 来自用户配置时不尝试。所有字体都没有该字符时返回（主槽位，0），即该字体的 `.notdef` 字形。
     pub(crate) fn resolve(&mut self, kind: FontKind, c: char) -> (u8, u16) {
         let kind = self.effective(kind);
         if kind.italic() {
@@ -894,40 +904,58 @@ impl Fonts {
             return hit;
         }
 
-        // 先找主字体及其列表中的字体，再找其他主字体及其列表（斜体没有的字符用正体，终端字体
-        // 没有的用等宽字体），最后是后备字体。斜体、终端字体不作为其他字体的后备。
-        //
-        // 终端字重与其余文字不同时，终端的列表已经按顺序包含等宽字体和界面字体，后备字体也有一份
-        // 按终端字重另外打开的，不再经过编辑区、界面的槽位，否则缺字会画成别的字重。
+        // 先找主字体及其列表（斜体缺字用正体，终端字体缺字用等宽字体，预览正文和公式缺字用界面
+        // 字体），再找另一种主字体及其列表，最后是后备字体；斜体、终端字体不作为后备。另一种主
+        // 字体来自用户配置时不找。终端字重不同时后备字体另有一份按终端字重打开的，不再经过其他
+        // 槽位，否则缺字会画成别的字重。
         let separate_terminal = self.terminal_shift != self.shift;
         let [mono, ui, terminal] = self.listed.clone();
         let with = |slot: u8, listed: Range<u8>| std::iter::once(slot).chain(listed);
         let mono = with(MONO, mono);
         let ui = with(UI, ui);
-        let mut order: Vec<u8> = match kind {
-            FontKind::Mono => mono.chain(ui).collect(),
-            FontKind::Ui => ui.chain(mono).collect(),
-            FontKind::MonoItalic => [MONO_ITALIC].into_iter().chain(mono).chain(ui).collect(),
-            FontKind::Math => [MATH].into_iter().chain(ui).chain(mono).collect(),
-            FontKind::Prose => [PROSE]
-                .into_iter()
-                .chain(self.prose_listed.iter().copied())
-                .chain(ui)
-                .chain(mono)
-                .collect(),
-            FontKind::Terminal if separate_terminal => with(TERMINAL, terminal).collect(),
-            FontKind::Terminal => with(TERMINAL, terminal).chain(mono).chain(ui).collect(),
-            FontKind::TerminalItalic if separate_terminal => [TERMINAL_ITALIC]
-                .into_iter()
-                .chain(with(TERMINAL, terminal))
-                .collect(),
-            FontKind::TerminalItalic => [TERMINAL_ITALIC]
-                .into_iter()
-                .chain(with(TERMINAL, terminal))
-                .chain(mono)
-                .chain(ui)
-                .collect(),
+        let (mut order, other): (Vec<u8>, Vec<u8>) = match kind {
+            FontKind::Mono => (mono.collect(), ui.collect()),
+            FontKind::Ui => (ui.collect(), mono.collect()),
+            FontKind::MonoItalic => (
+                [MONO_ITALIC].into_iter().chain(mono).collect(),
+                ui.collect(),
+            ),
+            FontKind::Math => ([MATH].into_iter().chain(ui).collect(), mono.collect()),
+            FontKind::Prose => (
+                [PROSE]
+                    .into_iter()
+                    .chain(self.prose_listed.iter().copied())
+                    .chain(ui)
+                    .collect(),
+                mono.collect(),
+            ),
+            FontKind::Terminal if separate_terminal => {
+                (with(TERMINAL, terminal).collect(), Vec::new())
+            }
+            FontKind::Terminal => (with(TERMINAL, terminal).chain(mono).collect(), ui.collect()),
+            FontKind::TerminalItalic if separate_terminal => (
+                [TERMINAL_ITALIC]
+                    .into_iter()
+                    .chain(with(TERMINAL, terminal))
+                    .collect(),
+                Vec::new(),
+            ),
+            FontKind::TerminalItalic => (
+                [TERMINAL_ITALIC]
+                    .into_iter()
+                    .chain(with(TERMINAL, terminal))
+                    .chain(mono)
+                    .collect(),
+                ui.collect(),
+            ),
         };
+        let other_configured = match kind {
+            FontKind::Ui | FontKind::Math | FontKind::Prose => self.mono_configured,
+            _ => self.ui_configured,
+        };
+        if !other_configured {
+            order.extend_from_slice(&other);
+        }
         let terminal_kind = matches!(kind, FontKind::Terminal | FontKind::TerminalItalic);
         if separate_terminal && terminal_kind {
             order.extend_from_slice(&self.terminal_fallbacks);
@@ -1099,22 +1127,48 @@ fn fontconfig(pattern: &str) -> Option<FontFile> {
 /// 汉字的字体强制绑定到 `sans-serif` 时，它在 `lang=zh-cn` 的查询中同样排第一。没有 `fc-match`
 /// 或查询失败时返回空列表。
 fn fontconfig_sorted(pattern: &str) -> Vec<FontFile> {
-    let output = std::process::Command::new("fc-match")
-        .args([
-            "--sort",
-            "--format",
-            "%{file}\n%{postscriptname}\n",
-            pattern,
-        ])
-        .stderr(std::process::Stdio::null())
-        .output();
-    match output {
-        Ok(output) if output.status.success() => {
-            parse_sorted_fonts(&String::from_utf8_lossy(&output.stdout))
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut command = Command::new("fc-match");
+    let format = "%{file}\n%{postscriptname}\n";
+    command.args(["--sort", "--format", format, pattern]);
+    command.stdin(Stdio::null()).stdout(Stdio::piped());
+    let Ok(mut child) = command.stderr(Stdio::null()).spawn() else {
+        return Vec::new();
+    };
+    // 另起线程读输出：字体多时输出超过管道的容量，没有人读进程就不会结束。
+    let reader = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            stdout.read_to_string(&mut text).map(|_| text)
+        })
+    });
+    let deadline = Instant::now() + FONTCONFIG_TIMEOUT;
+    let finished = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
         }
+    };
+    let text = reader.and_then(|reader| reader.join().ok()?.ok());
+    match text {
+        Some(text) if finished => parse_sorted_fonts(&text),
         _ => Vec::new(),
     }
 }
+
+/// 等待 `fc-match` 的最长时间（2 秒）。
+///
+/// 查询在第一次绘制某种文字时进行，其间界面不响应。字体缓存已建好时查询在几十毫秒内结束；
+/// 超过该时间（缓存正在重建）按没有结果处理，改用内置的后备顺序。
+const FONTCONFIG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// 解析 [`fontconfig_sorted`] 的输出：每个字体两行，依次是文件路径和 PostScript 名；只保留存在的
 /// 文件。
@@ -1289,10 +1343,9 @@ impl Candidates {
                 emoji: 2,
             }
         } else {
-            // Linux 先查询 fontconfig：它记录了发行版安装字体的位置，也按用户设置的偏好选择；没有
-            // fontconfig 的精简系统再试后面这些常见的位置。等宽字体和界面字体启动时就要用到，因此
-            // 同时查询（各约几毫秒），中文和 emoji 的后备字体到第一次用到时再查。应用指定了语言时，
-            // 等宽字体和界面字体也按该语言选，因为 fontconfig 默认按系统语言选。
+            // Linux 先查询 fontconfig（含发行版字体位置和用户偏好），没有它的精简系统再试后面的
+            // 常见位置。等宽、界面字体启动时就要用到，同时查询；中文和 emoji 的后备字体首次用到时
+            // 再查。应用指定了语言时，等宽、界面字体也按该语言选（fontconfig 默认按系统语言选）。
             let language = app_language().map_or_else(String::new, |lang| format!(":lang={lang}"));
             let (asked_mono, asked_ui) = std::thread::scope(|scope| {
                 let ui = scope.spawn(|| fontconfig(&format!("sans-serif{language}")));

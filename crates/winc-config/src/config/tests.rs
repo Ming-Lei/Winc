@@ -364,20 +364,25 @@ fn round_trips_through_json() {
         auto_save: Some(AutoSave::AfterDelay),
         hot_exit: Some(false),
         confirm_close: Some(true),
+        quit_on_last_window_close: Some(true),
         restore_folder: Some(false),
         new_file_on_startup: Some(true),
         default_language: Some("markdown".to_string()),
         detect_language_on_paste: Some(false),
+        drag_and_drop: Some(false),
         open_folder_in_new_window: Some(true),
         sticky_scroll: Some(false),
         word_wrap: Some(true),
+        align_columns: Some(false),
         whole_lines: Some(true),
         minimap: Some(true),
         outline: Some(false),
         render_whitespace: Some(RenderWhitespace::Trailing),
         diff_inline: Some(true),
+        diff_collapse_unchanged: Some(false),
         line_numbers: Some(false),
         status_bar: Some(false),
+        full_tab_names: Some(false),
         restore_window: Some(false),
         theme: Some(ThemeChoice::Dark),
         light_theme: Some("paper".to_string()),
@@ -399,6 +404,7 @@ fn round_trips_through_json() {
         confirm_drag_and_drop: Some(false),
         compact_folders: Some(false),
         preview_on_click: Some(true),
+        tree_auto_reveal: Some(false),
         external_terminal: Some("test-terminal".to_string()),
         vim_enabled: Some(true),
         vim_clipboard: Some(VimClipboard::Always),
@@ -440,6 +446,7 @@ fn round_trips_through_json() {
         git_inline_blame: Some(false),
         git_auto_fetch: Some(true),
         git_staging_area: Some(true),
+        git_combined_diff: Some(true),
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
         git_open_worktree: Some(WorktreeOpen::NewWindow),
@@ -544,7 +551,7 @@ fn to_json_writes_sections_in_a_fixed_order() {
     assert_eq!(Config::default().to_json(), "{}\n");
 }
 
-/// 挪过位置的设置：旧的位置照样读入，写回时只写新的位置。
+/// 挪过位置的设置：旧的位置仍然读入，写回时只写新的位置。
 #[test]
 fn moved_settings_are_read_from_the_old_place_and_written_to_the_new_one() {
     let (config, problems) = Config::parse(r#"{"git":{"systemProxy":false,"enabled":true}}"#);

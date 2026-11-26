@@ -34,6 +34,7 @@ impl Screen<'_> {
             guide_indent,
             folded_hits,
             long_hits,
+            http_hits,
             ime_cursor,
             caret,
         } = scratch;
@@ -105,10 +106,9 @@ impl Screen<'_> {
             (&column_cells[..], &column_fields[..], c.separator)
         });
 
-        // 行号、书签、折叠箭头绘制在行号栏中该行的位置。断成多段的行滚动到只显示后续各段时，
-        // 第一段已超出编辑区上沿，因此下移到顶部绘制，使行号仍对应本行。下移量最多到最后一段：
-        // 只有一段的行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与
-        // 下一行的行号重叠。
+        // 行号、书签、折叠箭头绘制在行号栏中该行的位置。断成多段的行滚动到只显示后续各段时，第一段
+        // 已超出编辑区上沿，因此下移到顶部绘制，使行号仍对应本行。下移量最多到最后一段：只有一段的
+        // 行仅上半部分滚出，最后一段只显示下半部分时同理，两种情况下行号都不得与下一行的行号重叠。
         let gutter_rows = rows.max(first_part + breaks.rows());
         let gutter_room = (gutter_rows - 1) as f64 * f64::from(lh);
         let gutter_shift = (f64::from(text_rect.y) - y).clamp(0.0, gutter_room);
@@ -140,6 +140,7 @@ impl Screen<'_> {
         self.draw_change_marks(frame, &row);
         self.draw_blame(frame, &row);
         self.draw_bookmark(frame, &row);
+        self.draw_http_run(frame, &row, http_hits);
         self.draw_fold_arrow(frame, &row);
         self.draw_guides(frame, &row, guide_indent);
         self.draw_marks(frame, &row);
@@ -562,7 +563,7 @@ impl Screen<'_> {
             let shift = part as f32 * lh;
             let target = caret_rect(x, row.y + shift, lh);
             if self.caret_animates() {
-                // 滑动中的光标可能位于其他行上，行都画完之后再画，不会被后面绘制的行盖住。
+                // 滑动中的光标可能位于其他行上，行都画完之后再画，不会被后面绘制的行遮住。
                 *caret = CaretDraw::Sliding(CaretTarget::new(
                     self.doc.id,
                     pos,
@@ -581,6 +582,14 @@ impl Screen<'_> {
                     text_rect,
                 ));
             }
+        }
+        // 拖动文字时将放下的位置：一直显示，不随光标闪烁。
+        if let Some((_, col)) = self.text_drop.filter(|&(line, _)| line == row.line)
+            && let Some(pos) = caret_pos(col)
+        {
+            let (part, x) = self.place(row, pos);
+            let bar = caret_rect(x, row.y + part as f32 * lh, lh);
+            frame.rect_clipped(bar, app.palette.caret, 1.0, text_rect);
         }
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处。
         if self.focused {

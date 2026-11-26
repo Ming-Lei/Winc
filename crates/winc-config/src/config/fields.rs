@@ -170,6 +170,7 @@ const EDITOR: &[Field] = &[
     },
     bool_field!("hotExit", hot_exit),
     bool_field!("confirmClose", confirm_close),
+    bool_field!("quitOnLastWindowClose", quit_on_last_window_close),
     bool_field!("restoreFolder", restore_folder),
     bool_field!("newFileOnStartup", new_file_on_startup),
     string_field!("defaultLanguage", default_language),
@@ -218,7 +219,9 @@ const EDITOR: &[Field] = &[
         },
     },
     bool_field!("stickyScroll", sticky_scroll),
+    bool_field!("dragAndDrop", drag_and_drop),
     bool_field!("wordWrap", word_wrap),
+    bool_field!("alignColumns", align_columns),
     bool_field!("wholeLines", whole_lines),
     bool_field!("minimap", minimap),
     bool_field!("smoothScrolling", smooth_scrolling),
@@ -262,8 +265,10 @@ const EDITOR: &[Field] = &[
         },
     },
     bool_field!("diffInline", diff_inline),
+    bool_field!("diffCollapseUnchanged", diff_collapse_unchanged),
     bool_field!("lineNumbers", line_numbers),
     bool_field!("statusBar", status_bar),
+    bool_field!("fullTabNames", full_tab_names),
     bool_field!("restoreWindow", restore_window),
 ];
 
@@ -345,6 +350,7 @@ const TREE: &[Field] = &[
     bool_field!("confirmDragAndDrop", confirm_drag_and_drop),
     bool_field!("compactFolders", compact_folders),
     bool_field!("previewOnClick", preview_on_click),
+    bool_field!("autoReveal", tree_auto_reveal),
 ];
 
 /// `markdown` 一节。
@@ -682,6 +688,7 @@ const GIT: &[Field] = &[
     bool_field!("inlineBlame", git_inline_blame),
     bool_field!("autoFetch", git_auto_fetch),
     bool_field!("stagingArea", git_staging_area),
+    bool_field!("combinedDiff", git_combined_diff),
     Field {
         key: "repositoryScanDepth",
         read: |config, value, name, problems| {
@@ -777,7 +784,7 @@ const GIT: &[Field] = &[
 /// `network` 一节。
 const NETWORK: &[Field] = &[bool_field!("systemProxy", system_proxy)];
 
-/// 挪过位置的设置：（旧的节，旧的键，新的节，新的键）。旧的位置照样读入，写回时只写新的位置。
+/// 挪过位置的设置：（旧的节，旧的键，新的节，新的键）。旧的位置仍然读入，写回时只写新的位置。
 const MOVED: &[(&str, &str, &str, &str)] = &[("git", "systemProxy", "network", "systemProxy")];
 
 /// 节 `name` 中的 `key` 挪去的位置的那一项。

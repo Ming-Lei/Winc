@@ -12,7 +12,7 @@ impl App {
     /// 重新计算运行页每一行上显示的内容；打开设置、修改命令之后调用。
     pub(super) fn refresh_script_rows(&mut self) {
         let project = self.project_format().unwrap_or_default();
-        let ids = self.settings.languages.script.clone();
+        let ids = self.settings.listed.script.clone();
         self.settings.script_rows = ids
             .into_iter()
             .filter_map(|id| {

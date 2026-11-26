@@ -222,9 +222,8 @@ impl App {
         self.settings.error = self.broken_font(self.settings.selected.page());
         self.settings.keyboard = false;
         self.settings.hover = None;
-        self.settings.languages = ToolLanguages::default();
-        self.settings.languages.script = winc_config::script_language_ids().to_vec();
         self.settings.listed = Listed::default();
+        self.settings.listed.script = winc_config::script_language_ids().to_vec();
         self.refresh_vim_key_rows();
         // 每次打开设置重新查询发行版中的工具：其间新安装的能列出来。
         self.format.formatter.forget_wsl();

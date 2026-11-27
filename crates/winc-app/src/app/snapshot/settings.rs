@@ -2,6 +2,7 @@
 
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 mod appearance;
+mod editor;
 #[cfg(unix)]
 mod format;
 mod search;
@@ -252,16 +253,23 @@ fn long_descriptions_wrap_and_make_the_row_taller() {
     let dir = search_folder("settings-wrap");
     let mut app = app_with(&dir, false);
     app.open_settings();
-    app.settings_show_page(SettingsPage::Files);
+    app.settings_show_page(SettingsPage::Editor);
     let row = |app: &App, setting| app.settings_layout().row(setting).unwrap().row;
+    // 这一页说明最长的一项，不依赖具体的文案。
+    let sections = SettingsPage::Editor.sections(&Default::default());
+    let items = sections
+        .iter()
+        .flat_map(|section| section.items.iter().copied());
+    let longest = items
+        .max_by_key(|s| s.description().map_or(0, |d| d.chars().count()))
+        .unwrap();
 
     // 默认大小的窗口中各项说明都放得下一行。
-    assert_eq!(row(&app, Setting::PreviewOnClick).h, SETTINGS_ROW_TALL);
-    assert_eq!(row(&app, Setting::Outline).h, SETTINGS_ROW_TALL);
+    assert_eq!(row(&app, longest).h, SETTINGS_ROW_TALL);
 
     // 放大界面后可用宽度变小：较长的说明折成两行，该行加高一行的行距，不超过上限。
     app.set_zoom(200);
-    let h = row(&app, Setting::PreviewOnClick).h;
+    let h = row(&app, longest).h;
     let most = SETTINGS_ROW_TALL + (SETTINGS_DESC_LINES - 1) as f32 * SETTINGS_DESC_LINE;
     assert!(
         h >= SETTINGS_ROW_TALL + SETTINGS_DESC_LINE && h <= most,
@@ -343,7 +351,8 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
     // 向回走一步，回到模块页最后的远程开关，焦点回到浮层；再往回是终端开关和 Git 开关；再走
-    // 一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「终端应用优先」）。
+    // 一步是 AI 页的最后一项，走过该页的五项后是终端页的最后一项（macOS 上是「Meta 键」，
+    // 其他平台是「终端应用优先」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::RemoteModule);
     assert_eq!(app.focus, Focus::Settings);
@@ -352,6 +361,10 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
     app.settings_move(false);
+    assert_eq!(app.settings.selected, Setting::AiTimeout);
+    for _ in 0..5 {
+        app.settings_move(false);
+    }
     let last = if cfg!(target_os = "macos") {
         Setting::TerminalOptionAsMeta
     } else {
@@ -1241,9 +1254,12 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
     let expected = [
         Setting::GitPath,
         Setting::GitOpenWorktree,
+        Setting::GitLogPlacement,
         Setting::GitScanDepth,
         Setting::GitStagingArea,
         Setting::GitTree,
+        Setting::GitCommitHistory,
+        Setting::GitGenerateCommitMessage,
         Setting::GitCombinedDiff,
         Setting::DiffInline,
         Setting::DiffCollapse,
@@ -1254,6 +1270,21 @@ fn the_git_page_is_listed_only_when_the_module_is_on() {
         Setting::GitAutoFetch,
     ];
     assert_eq!(rows, expected);
+    // 调用模型的设置在单独的 AI 页，「AI 生成提交信息」的开关在 Git 页。
+    app.settings_show_page(SettingsPage::Ai);
+    let rows: Vec<Setting> = (app.settings_layout().rows.iter())
+        .map(|row| row.setting)
+        .collect();
+    let expected = [
+        Setting::AiBaseUrl,
+        Setting::AiApiKey,
+        Setting::AiProtocol,
+        Setting::AiModel,
+        Setting::AiTimeout,
+    ];
+    assert_eq!(rows, expected);
+    assert!(!app.switch_on(Setting::GitGenerateCommitMessage));
+    app.settings_show_page(SettingsPage::Git);
     // 代理不只管 Git：放在「通用」页的更新旁边，关掉 Git 模块也找得到。
     assert_eq!(Setting::SystemProxy.page(), SettingsPage::General);
     // 「树形显示更改」与提交视图「⋯」菜单里的是同一个开关，记在状态文件里。

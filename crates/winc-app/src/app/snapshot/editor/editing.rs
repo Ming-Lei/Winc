@@ -599,11 +599,11 @@ fn status_bar_changes_indentation_and_line_endings() {
     ));
     app.overlays.context_menu = None;
 
-    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮。
+    // 仅供查看的输出标签（格式化输出）的状态栏上，可点击的项只有设置按钮和光标位置（转到行）。
     app.editor.show_output("格式化输出", "x\n");
     paint(&mut app);
     let items: Vec<StatusItem> = app.hits.status.iter().map(|&(_, item)| item).collect();
-    assert_eq!(items, [StatusItem::Settings]);
+    assert_eq!(items, [StatusItem::Settings, StatusItem::Position]);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -1357,6 +1357,51 @@ fn wrapped_long_lines_expand_by_clicking_or_by_the_setting() {
 }
 
 /// 「字符转为 Unicode 转义」「Unicode 转义转为字符」：没有选区时转换整个文件，可以撤销。
+#[test]
+fn json_in_a_log_line_is_pretty_printed_and_minified_at_the_caret() {
+    let dir = sample_folder("json-in-log");
+    let file = dir.join("server.log");
+    let line = r#"12:00 INFO request={"id":7,"tags":["a"]} took 3ms"#;
+    std::fs::write(&file, format!("{line}\n")).unwrap();
+    let mut app = app_with(&file, false);
+    let text = |app: &App| {
+        app.editor
+            .active()
+            .unwrap()
+            .text()
+            .rope()
+            .unwrap()
+            .to_string()
+    };
+    let caret = line.find("\"id").unwrap();
+    app.select(caret, caret);
+
+    // 缩进跟随文档（4 个空格）；转换后选中新的内容，压缩后还原为原文。
+    assert!(app.run_action(Action::PrettyPrintJson));
+    let pretty =
+        "12:00 INFO request={\n    \"id\": 7,\n    \"tags\": [\n        \"a\"\n    ]\n} took 3ms\n";
+    assert_eq!(text(&app), pretty);
+    assert!(app.run_action(Action::MinifyJson));
+    assert_eq!(text(&app), format!("{line}\n"));
+    assert!(app.run_action(Action::Undo));
+    assert_eq!(text(&app), pretty);
+
+    // 无效的 JSON 不修改，在状态栏说明位置；光标处没有 JSON 时同样提示。
+    std::fs::write(&file, "x = {\"a\":1,}\n").unwrap();
+    let mut app = app_with(&file, false);
+    app.select(5, 5);
+    assert!(app.run_action(Action::PrettyPrintJson));
+    assert_eq!(text(&app), "x = {\"a\":1,}\n");
+    assert_eq!(
+        app.status.message.as_deref(),
+        Some("无法美化 JSON：第 1 行第 12 列不符合 JSON 语法")
+    );
+    app.select(0, 0);
+    assert!(app.run_action(Action::MinifyJson));
+    assert_eq!(app.status.message.as_deref(), Some("未找到 JSON"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn unicode_escapes_convert_both_ways() {
     let dir = sample_folder("unicode-escapes");

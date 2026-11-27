@@ -965,6 +965,15 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, with_key(label, Some(Action::ToggleTerminalPanel))))
         }
+        Hover::Status(item @ crate::app::StatusItem::GitPanel) => {
+            let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
+            let label = if app.git_panel_shown() {
+                t!("git-panel-hide")
+            } else {
+                t!("git-panel-show")
+            };
+            Some((rect, with_key(label, Some(Action::GitShowLog))))
+        }
         Hover::Status(item @ crate::app::StatusItem::Remote) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
             // 已打开远端目录时说明连着哪台主机。
@@ -982,6 +991,14 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
                 None => t!("workspace-start-remote").to_owned(),
             };
             Some((rect, with_key(&label, Some(Action::RemoteConnect))))
+        }
+        Hover::Status(item @ crate::app::StatusItem::Position) => {
+            let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;
+            let label = match app.hex_active() {
+                true => t!("menu-hex-go-to"),
+                false => t!("cmd-go-to-line"),
+            };
+            Some((rect, with_key(label, Some(Action::GoToLine))))
         }
         Hover::Status(item @ crate::app::StatusItem::ReadOnly) => {
             let rect = app.hits.status.iter().find(|(_, i)| *i == item)?.0;

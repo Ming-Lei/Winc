@@ -1,4 +1,5 @@
-//! 设置页中的数值设置：字号、字重、不透明度、制表符长度、查找仓库的层数的显示值和逐档调整。
+//! 设置页中的数值设置：字号、字重、不透明度、制表符长度、查找仓库的层数、等待模型响应的时间的
+//! 显示值和逐档调整。
 
 use std::ops::RangeInclusive;
 
@@ -9,6 +10,9 @@ const OPACITY_STEP: f32 = 5.0;
 
 /// 设置页中字重每次调整的量。
 const FONT_WEIGHT_STEP: u16 = 100;
+
+/// 设置页中等待模型响应的时间每次调整的量（秒）：取自调参，逐秒调整过细。
+const AI_TIMEOUT_STEP: u64 = 10;
 
 /// 把 `value` 加 1（`up` 为 `true`）或减 1，结果限制在 `range` 之内。
 pub(super) fn step(value: f32, up: bool, range: RangeInclusive<f32>) -> f32 {
@@ -41,6 +45,10 @@ impl App {
                 Config::UI_SIZE_RANGE,
             ),
             Setting::FontWeight => (f32::from(self.font_weight()), Config::FONT_WEIGHT_RANGE),
+            Setting::EditorFontWeight => (
+                f32::from(self.editor_font_weight()),
+                Config::FONT_WEIGHT_RANGE,
+            ),
             Setting::BackgroundOpacity => (
                 (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY),
                 Config::BACKGROUND_OPACITY_RANGE,
@@ -64,6 +72,10 @@ impl App {
             Setting::GitScanDepth => (
                 self.repository_scan_depth() as f32,
                 Config::REPOSITORY_SCAN_DEPTH_RANGE,
+            ),
+            Setting::AiTimeout => (
+                self.config.ai_timeout.unwrap_or(Config::AI_TIMEOUT) as f32,
+                Config::AI_TIMEOUT_RANGE,
             ),
             _ => return (String::new(), true, true),
         };
@@ -95,7 +107,13 @@ impl App {
                 self.config.ui_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
                 self.apply_fonts().ok();
             }
-            // 同终端字号：调整过就记下，不再随全局字重变化。
+            Setting::EditorFontWeight => {
+                let current = self.editor_font_weight();
+                let next = step_weight(current, up, Config::FONT_WEIGHT_RANGE);
+                self.config.editor_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
+                self.apply_fonts().ok();
+            }
+            // 与终端字号相同：调整后写入配置，不再随编辑区字重变化。
             Setting::TerminalFontWeight => {
                 let current = self.terminal_font_weight();
                 let next = step_weight(current, up, Config::FONT_WEIGHT_RANGE);
@@ -135,6 +153,16 @@ impl App {
                 let next = step(current, up, Config::REPOSITORY_SCAN_DEPTH_RANGE) as usize;
                 self.config.repository_scan_depth = Some(next);
                 self.git_scan_repositories();
+            }
+            Setting::AiTimeout => {
+                let current = self.config.ai_timeout.unwrap_or(Config::AI_TIMEOUT);
+                let next = match up {
+                    true => current + AI_TIMEOUT_STEP,
+                    false => current.saturating_sub(AI_TIMEOUT_STEP),
+                };
+                let range = Config::AI_TIMEOUT_RANGE;
+                let next = (next as f32).clamp(*range.start(), *range.end()) as u64;
+                self.config.ai_timeout = Some(next);
             }
             _ => return,
         }

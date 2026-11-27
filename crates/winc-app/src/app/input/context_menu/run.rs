@@ -49,12 +49,15 @@ impl App {
             MenuTarget::Tab(id) => self.run_tab_command(command, id),
             MenuTarget::CommitFile(path) => self.run_commit_file_command(command, path),
             // 提交上的分支子菜单：分支按弹出菜单时的列表解释。
-            MenuTarget::LogCommit(_) if let MenuCommand::GitBranch(op, i) = command => {
+            MenuTarget::LogCommit(_) | MenuTarget::HistoryCommit(_)
+                if let MenuCommand::GitBranch(op, i) = command =>
+            {
                 if let Some(branch) = menu.branches.get(i).cloned() {
                     self.run_branch_op(op, branch);
                 }
             }
-            MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid),
+            MenuTarget::LogCommit(oid) => self.run_log_commit_command(command, &oid, true),
+            MenuTarget::HistoryCommit(oid) => self.run_log_commit_command(command, &oid, false),
             MenuTarget::LogFile(i, path) => self.run_log_file_command(command, i, path),
             MenuTarget::SearchResult(path, m) => self.run_search_result_command(command, path, m),
             // 分支、储藏的下标按弹出菜单时的列表解释：菜单打开期间状态刷新后，
@@ -269,6 +272,15 @@ impl App {
                     self.set_auto_save(choice);
                 }
             }
+            MenuTarget::CursorStyle => {
+                if let MenuCommand::CursorStyle(i) = command
+                    && let Some(&choice) = winc_config::CursorStyle::ALL.get(i)
+                {
+                    self.config.cursor_style = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
+                }
+            }
             MenuTarget::SmoothCaret => {
                 if let MenuCommand::SmoothCaret(i) = command
                     && let Some(&choice) = winc_config::SmoothCaret::ALL.get(i)
@@ -283,11 +295,25 @@ impl App {
                     self.set_open_worktree(choice);
                 }
             }
+            MenuTarget::LogPlacement => {
+                if let MenuCommand::LogPlacement(i) = command
+                    && let Some(&choice) = winc_config::LogPlacement::ALL.get(i)
+                {
+                    self.set_log_placement(choice);
+                }
+            }
             MenuTarget::PullMode => {
                 if let MenuCommand::PullMode(i) = command
                     && let Some(&choice) = winc_config::PullMode::ALL.get(i)
                 {
                     self.set_pull_mode(choice);
+                }
+            }
+            MenuTarget::AiProtocol => {
+                if let MenuCommand::AiProtocol(i) = command
+                    && let Some(&choice) = winc_config::AiProtocol::ALL.get(i)
+                {
+                    self.set_ai_protocol(choice);
                 }
             }
             MenuTarget::VimKey(c) => {
@@ -357,6 +383,15 @@ impl App {
             MenuTarget::TerminalTabPosition => {
                 if let MenuCommand::TerminalTabPosition(right) = command {
                     self.set_terminal_tab_position(right);
+                }
+            }
+            MenuTarget::RightClick => {
+                if let MenuCommand::RightClick(i) = command
+                    && let Some(&choice) = winc_config::TerminalRightClick::ALL.get(i)
+                {
+                    self.config.terminal_right_click = Some(choice);
+                    self.save_config();
+                    self.request_redraw();
                 }
             }
             MenuTarget::OptionAsMeta => {
@@ -472,6 +507,17 @@ impl App {
                 MenuCommand::RunEdit => self.edit_run_configs(),
                 _ => {}
             },
+            MenuTarget::NewTab => match command {
+                MenuCommand::NewUntitled => self.new_file(),
+                MenuCommand::NewEditorTerminal => self.new_editor_terminal(None),
+                MenuCommand::NewEditorTerminalShell(i) => {
+                    let shell = self.terminal_shell_list().into_iter().nth(i);
+                    if let Some(shell) = shell {
+                        self.new_editor_terminal(Some(shell.command));
+                    }
+                }
+                _ => {}
+            },
             MenuTarget::TerminalShells => {
                 if let MenuCommand::NewTerminalShell(i) = command {
                     self.new_terminal_with_shell(i);
@@ -534,7 +580,7 @@ impl App {
                 }
             }
             MenuCommand::CommitCheck(on) => self.stage_paths(&[target], on),
-            MenuCommand::GitRollbackFile => self.confirm_rollback(vec![target]),
+            MenuCommand::GitRollbackFile => self.confirm_commit_rollback(vec![target]),
             MenuCommand::NewFile | MenuCommand::NewFolder => {
                 // 右键时已选中了那一行（空白处则取消选中），新建的位置由选中的行决定。
                 self.start_new_entry(command == MenuCommand::NewFolder);
@@ -703,7 +749,7 @@ impl App {
             }
             MenuCommand::GitRollbackFile => {
                 if let Some(path) = path {
-                    self.confirm_rollback(vec![path]);
+                    self.confirm_commit_rollback(vec![path]);
                 }
             }
             MenuCommand::Close => self.close_tab(index),

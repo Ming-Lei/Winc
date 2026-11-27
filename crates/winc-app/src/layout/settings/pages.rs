@@ -24,6 +24,8 @@ pub enum SettingsPage {
     Git,
     /// 终端：默认 shell、面板位置、字体、字号、字重和终端行为。
     Terminal,
+    /// AI：模型服务的地址、密钥、接口协议、调用的模型和超时时间。
+    Ai,
     /// 模块：可选模块的开关。
     Modules,
     /// 快捷键：只列出键位，不含设置项，整页由 [`KeysLayout`] 单独布局。
@@ -51,6 +53,7 @@ impl SettingsPage {
         SettingsPage::Run,
         SettingsPage::Git,
         SettingsPage::Terminal,
+        SettingsPage::Ai,
         SettingsPage::Modules,
         SettingsPage::Keys,
         SettingsPage::About,
@@ -77,6 +80,7 @@ impl SettingsPage {
             SettingsPage::Run => t!("settings-page-run"),
             SettingsPage::Git => t!("settings-page-git"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
+            SettingsPage::Ai => t!("settings-page-ai"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Keys => t!("settings-page-keys"),
             SettingsPage::About => t!("settings-page-about"),
@@ -153,23 +157,32 @@ impl SettingsPage {
             SettingsPage::Editor => vec![
                 group(
                     t!("settings-group-font-indent"),
-                    vec![S::EditorFont, S::EditorSize, S::TabWidth],
+                    vec![
+                        S::EditorFont,
+                        S::EditorSize,
+                        S::EditorFontWeight,
+                        S::TabWidth,
+                    ],
                 ),
                 group(
                     t!("settings-group-display"),
+                    vec![S::LineNumbers, S::EditorRulers, S::Minimap, S::StickyScroll],
+                ),
+                group(
+                    t!("settings-group-text"),
                     vec![
-                        S::LineNumbers,
                         S::WordWrap,
-                        S::AlignColumns,
-                        S::Minimap,
-                        S::StickyScroll,
-                        S::SmoothCaret,
-                        S::RenderWhitespace,
                         S::WholeLines,
-                        S::FullTabNames,
+                        S::AlignColumns,
+                        S::EditorLigatures,
+                        S::RenderWhitespace,
+                        S::RenderLineEndings,
                     ],
                 ),
-                group(t!("settings-group-behavior"), vec![S::DragAndDrop]),
+                group(
+                    t!("settings-group-caret"),
+                    vec![S::CursorStyle, S::SmoothCaret, S::DragAndDrop],
+                ),
                 group(
                     t!("settings-group-new-files"),
                     vec![S::DefaultLanguage, S::DetectLanguageOnPaste],
@@ -194,9 +207,10 @@ impl SettingsPage {
             .collect(),
             SettingsPage::Files => vec![
                 group(
-                    t!("settings-group-opening"),
-                    vec![S::PreviewOnClick, S::DropFolder],
+                    t!("settings-group-tabs"),
+                    vec![S::PreviewOnClick, S::FullTabNames],
                 ),
+                group(t!("settings-group-opening"), vec![S::DropFolder]),
                 group(
                     t!("settings-group-sidebar"),
                     vec![S::CompactFolders, S::AutoReveal, S::Outline, S::FindInFiles],
@@ -225,6 +239,7 @@ impl SettingsPage {
             SettingsPage::Terminal => {
                 let mut behavior = vec![
                     S::TerminalCopyOnSelect,
+                    S::TerminalRightClick,
                     S::TerminalConfirmClose,
                     S::TerminalApplicationPriority,
                 ];
@@ -242,14 +257,12 @@ impl SettingsPage {
                         ],
                     ),
                     group(
-                        t!("settings-group-display"),
-                        vec![
-                            S::TerminalPosition,
-                            S::TerminalTabPosition,
-                            S::TerminalFont,
-                            S::TerminalSize,
-                            S::TerminalFontWeight,
-                        ],
+                        t!("settings-group-font"),
+                        vec![S::TerminalFont, S::TerminalSize, S::TerminalFontWeight],
+                    ),
+                    group(
+                        t!("settings-group-panel"),
+                        vec![S::TerminalPosition, S::TerminalTabPosition],
                     ),
                     group(t!("settings-group-behavior"), behavior),
                 ]
@@ -257,11 +270,21 @@ impl SettingsPage {
             SettingsPage::Git => vec![
                 group(
                     t!("settings-group-general"),
-                    vec![S::GitPath, S::GitOpenWorktree, S::GitScanDepth],
+                    vec![
+                        S::GitPath,
+                        S::GitOpenWorktree,
+                        S::GitLogPlacement,
+                        S::GitScanDepth,
+                    ],
                 ),
                 group(
                     t!("settings-group-commit"),
-                    vec![S::GitStagingArea, S::GitTree],
+                    vec![
+                        S::GitStagingArea,
+                        S::GitTree,
+                        S::GitCommitHistory,
+                        S::GitGenerateCommitMessage,
+                    ],
                 ),
                 group(
                     t!("settings-group-diff"),
@@ -282,6 +305,16 @@ impl SettingsPage {
                     ],
                 ),
             ],
+            SettingsPage::Ai => vec![group(
+                t!("settings-group-api"),
+                vec![
+                    S::AiBaseUrl,
+                    S::AiApiKey,
+                    S::AiProtocol,
+                    S::AiModel,
+                    S::AiTimeout,
+                ],
+            )],
             SettingsPage::Modules => vec![group(
                 t!("settings-page-modules"),
                 vec![S::GitModule, S::TerminalModule, S::RemoteModule],

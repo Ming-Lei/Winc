@@ -23,6 +23,7 @@ impl App {
             || (old.terminal_font != new.terminal_font || old.terminal_size != new.terminal_size)
             || (old.markdown_font != new.markdown_font || old.markdown_size != new.markdown_size)
             || (old.ui_font_weight != new.ui_font_weight
+                || old.editor_font_weight != new.editor_font_weight
                 || old.terminal_font_weight != new.terminal_font_weight);
         let theme = (old.theme != new.theme || old.dark_theme != new.dark_theme)
             || old.light_theme != new.light_theme;
@@ -101,6 +102,9 @@ impl App {
         }
         if combined_view {
             self.apply_combined_view();
+        }
+        if old.git_log_placement != self.config.git_log_placement {
+            self.apply_log_placement(false);
         }
         winc_editor::proxy::follow_system_proxy(self.config.system_proxy != Some(false));
         if images {

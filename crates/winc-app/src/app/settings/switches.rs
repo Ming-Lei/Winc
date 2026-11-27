@@ -23,6 +23,8 @@ impl App {
             Setting::AlignColumns => self.config.align_columns != Some(false),
             Setting::WholeLines => self.config.whole_lines == Some(true),
             Setting::Minimap => self.config.minimap == Some(true),
+            Setting::RenderLineEndings => self.config.render_line_endings == Some(true),
+            Setting::EditorLigatures => self.config.editor_font_ligatures == Some(true),
             Setting::Outline => self.config.outline != Some(false),
             Setting::LineNumbers => self.config.line_numbers != Some(false),
             Setting::DiffInline => self.config.diff_inline == Some(true),
@@ -50,7 +52,11 @@ impl App {
             Setting::GitRememberCredentials => self.config.git_remember_credentials != Some(false),
             Setting::SystemProxy => self.config.system_proxy != Some(false),
             Setting::GitInlineBlame => self.config.git_inline_blame != Some(false),
+            Setting::GitCommitHistory => self.config.git_commit_history == Some(true),
             Setting::GitAutoFetch => self.config.git_auto_fetch == Some(true),
+            Setting::GitGenerateCommitMessage => {
+                self.config.git_generate_commit_message == Some(true)
+            }
             Setting::GitTree => !self.git.commit.flat(),
             Setting::GitStagingArea => self.config.git_staging_area == Some(true),
             Setting::GitCombinedDiff => self.config.git_combined_diff == Some(true),
@@ -110,6 +116,8 @@ impl App {
             }
             Setting::WholeLines => self.config.whole_lines = Some(on),
             Setting::Minimap => self.config.minimap = Some(on),
+            Setting::RenderLineEndings => self.config.render_line_endings = Some(on),
+            Setting::EditorLigatures => self.config.editor_font_ligatures = Some(on),
             Setting::Outline => self.config.outline = Some(on),
             Setting::LineNumbers => self.config.line_numbers = Some(on),
             Setting::DiffInline => self.config.diff_inline = Some(on),
@@ -147,7 +155,9 @@ impl App {
             Setting::GitStagingArea => self.config.git_staging_area = Some(on),
             Setting::GitCombinedDiff => self.config.git_combined_diff = Some(on),
             Setting::GitInlineBlame => self.config.git_inline_blame = Some(on),
+            Setting::GitCommitHistory => self.config.git_commit_history = Some(on),
             Setting::GitAutoFetch => self.config.git_auto_fetch = Some(on),
+            Setting::GitGenerateCommitMessage => self.config.git_generate_commit_message = Some(on),
             Setting::TerminalModule => self.config.terminal_enabled = Some(on),
             Setting::RemoteModule => self.config.remote_enabled = Some(on),
             Setting::ExplorerMenu => {
